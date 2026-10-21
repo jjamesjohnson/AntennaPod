@@ -38,6 +38,7 @@ import java.util.concurrent.Semaphore;
 import de.danoeh.antennapod.event.FeedItemEvent;
 import de.danoeh.antennapod.event.FeedListUpdateEvent;
 import de.danoeh.antennapod.event.playback.PlaybackHistoryEvent;
+import de.danoeh.antennapod.event.PlaylistEvent;
 import de.danoeh.antennapod.event.QueueEvent;
 import de.danoeh.antennapod.event.FeedEvent;
 import de.danoeh.antennapod.storage.preferences.PlaybackPreferences;
@@ -47,6 +48,7 @@ import de.danoeh.antennapod.model.feed.Feed;
 import de.danoeh.antennapod.model.feed.FeedItem;
 import de.danoeh.antennapod.model.feed.FeedMedia;
 import de.danoeh.antennapod.model.feed.FeedPreferences;
+import de.danoeh.antennapod.model.feed.Playlist;
 import de.danoeh.antennapod.model.feed.SortOrder;
 import de.danoeh.antennapod.model.playback.Playable;
 import de.danoeh.antennapod.net.sync.serviceinterface.EpisodeAction;
@@ -591,6 +593,60 @@ public class DBWriter {
 
     public static Future<?> moveQueueItemsToBottom(final List<FeedItem> items) {
         return runOnDbThread(() -> moveQueueItemsSynchronous(false, items));
+    }
+
+    /**
+     * Replaces the whole queue with the given list of FeedItems.
+     *
+     * @param queue The new queue, in the order in which it should be played.
+     */
+    public static Future<?> setQueue(final List<FeedItem> queue) {
+        return runOnDbThread(() -> {
+            final PodDBAdapter adapter = PodDBAdapter.getInstance();
+            adapter.open();
+            adapter.setQueue(queue);
+            adapter.close();
+            EventBus.getDefault().post(QueueEvent.setQueue(queue));
+        });
+    }
+
+    /**
+     * Creates a new playlist.
+     */
+    public static Future<?> createPlaylist(final Playlist playlist) {
+        return runOnDbThread(() -> {
+            final PodDBAdapter adapter = PodDBAdapter.getInstance();
+            adapter.open();
+            adapter.createPlaylist(playlist);
+            adapter.close();
+            EventBus.getDefault().post(PlaylistEvent.created(playlist.getId()));
+        });
+    }
+
+    /**
+     * Updates an existing playlist, including its associated feeds.
+     */
+    public static Future<?> updatePlaylist(final Playlist playlist) {
+        return runOnDbThread(() -> {
+            final PodDBAdapter adapter = PodDBAdapter.getInstance();
+            adapter.open();
+            adapter.updatePlaylist(playlist);
+            adapter.close();
+            EventBus.getDefault().post(PlaylistEvent.updated(playlist.getId()));
+        });
+    }
+
+    /**
+     * Deletes a playlist.
+     */
+    public static Future<?> deletePlaylist(final Playlist playlist) {
+        return runOnDbThread(() -> {
+            final PodDBAdapter adapter = PodDBAdapter.getInstance();
+            adapter.open();
+            adapter.deletePlaylist(playlist.getId());
+            adapter.close();
+            EventBus.getDefault().post(PlaylistEvent.deleted(playlist.getId()));
+        });
     }
 
     private static void moveQueueItemsSynchronous(final boolean moveToTop, final List<FeedItem> items) {
