@@ -359,7 +359,9 @@ class DBUpgrader {
             db.execSQL(PodDBAdapter.CREATE_TABLE_PLAYLISTS);
             db.execSQL(PodDBAdapter.CREATE_TABLE_PLAYLIST_FEEDS);
         }
-        if (oldVersion < 3110002) {
+        if (oldVersion >= 3110001 && oldVersion < 3110002) {
+            // Databases from before 3110001 already got the current playlist schema (with the
+            // per-podcast columns and without playlist-wide flags) in the block above.
             db.execSQL("ALTER TABLE " + PodDBAdapter.TABLE_NAME_PLAYLIST_FEEDS
                     + " ADD COLUMN " + PodDBAdapter.KEY_FILTER_UNPLAYED + " INTEGER DEFAULT 0");
             db.execSQL("ALTER TABLE " + PodDBAdapter.TABLE_NAME_PLAYLIST_FEEDS

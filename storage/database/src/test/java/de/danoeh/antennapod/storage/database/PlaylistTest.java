@@ -1,6 +1,7 @@
 package de.danoeh.antennapod.storage.database;
 
 import android.content.Context;
+import android.database.sqlite.SQLiteDatabase;
 
 import org.junit.After;
 import org.junit.Before;
@@ -9,6 +10,7 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
@@ -46,8 +48,78 @@ public class PlaylistTest {
 
     @After
     public void tearDown() {
-        PodDBAdapter.deleteDatabase();
         PodDBAdapter.tearDownTests();
+        context.getDatabasePath(PodDBAdapter.DATABASE_NAME).delete();
+    }
+
+    @Test
+    public void testUpgradeFromBeforePlaylistTablesCreatesCurrentSchema() {
+        recreateDatabaseAsVersion(3110000);
+        PodDBAdapter.getInstance(); // Triggers the upgrade
+
+        Playlist playlist = new Playlist(0, "Migrated");
+        PlaylistFeedSettings settings = new PlaylistFeedSettings(1L);
+        settings.setFilterUnplayed(true);
+        playlist.getFeedSettings().add(settings);
+        PodDBAdapter adapter = PodDBAdapter.getInstance();
+        adapter.open();
+        adapter.createPlaylist(playlist);
+        adapter.close();
+
+        List<Playlist> playlists = DBReader.getPlaylists();
+        assertEquals(1, playlists.size());
+        PlaylistFeedSettings stored = playlists.get(0).getFeedSettings(1L);
+        assertNotNull(stored);
+        assertTrue(stored.isFilterUnplayed());
+    }
+
+    @Test
+    public void testUpgradeFrom3110001CopiesPlaylistWideFlags() {
+        recreateDatabaseAsVersion(3110001,
+                "CREATE TABLE " + PodDBAdapter.TABLE_NAME_PLAYLISTS + " (" + PodDBAdapter.KEY_ID
+                        + " INTEGER PRIMARY KEY AUTOINCREMENT, " + PodDBAdapter.KEY_TITLE + " TEXT, "
+                        + PodDBAdapter.KEY_FILTER_UNPLAYED + " INTEGER DEFAULT 0, "
+                        + PodDBAdapter.KEY_FILTER_DOWNLOADED + " INTEGER DEFAULT 0, "
+                        + PodDBAdapter.KEY_MAX_AGE_DAYS + " INTEGER DEFAULT 0)",
+                "CREATE TABLE " + PodDBAdapter.TABLE_NAME_PLAYLIST_FEEDS + " (" + PodDBAdapter.KEY_ID
+                        + " INTEGER PRIMARY KEY AUTOINCREMENT, " + PodDBAdapter.KEY_PLAYLIST
+                        + " INTEGER, " + PodDBAdapter.KEY_FEED + " INTEGER)",
+                "INSERT INTO " + PodDBAdapter.TABLE_NAME_PLAYLISTS + " (" + PodDBAdapter.KEY_TITLE + ", "
+                        + PodDBAdapter.KEY_FILTER_UNPLAYED + ", " + PodDBAdapter.KEY_FILTER_DOWNLOADED
+                        + ", " + PodDBAdapter.KEY_MAX_AGE_DAYS + ") VALUES ('News', 1, 0, 3)",
+                "INSERT INTO " + PodDBAdapter.TABLE_NAME_PLAYLIST_FEEDS + " (" + PodDBAdapter.KEY_PLAYLIST
+                        + ", " + PodDBAdapter.KEY_FEED + ") VALUES (1, 42)",
+                "INSERT INTO " + PodDBAdapter.TABLE_NAME_PLAYLIST_FEEDS + " (" + PodDBAdapter.KEY_PLAYLIST
+                        + ", " + PodDBAdapter.KEY_FEED + ") VALUES (1, 43)");
+        PodDBAdapter.getInstance(); // Triggers the upgrade
+
+        List<Playlist> playlists = DBReader.getPlaylists();
+        assertEquals(1, playlists.size());
+        assertEquals("News", playlists.get(0).getName());
+        assertEquals(2, playlists.get(0).getFeedSettings().size());
+        PlaylistFeedSettings first = playlists.get(0).getFeedSettings(42L);
+        assertNotNull(first);
+        assertTrue(first.isFilterUnplayed());
+        assertTrue(!first.isFilterDownloaded());
+        assertEquals(3, first.getMaxAgeDays());
+        PlaylistFeedSettings second = playlists.get(0).getFeedSettings(43L);
+        assertNotNull(second);
+        assertTrue(second.isFilterUnplayed());
+        assertEquals(3, second.getMaxAgeDays());
+    }
+
+    private void recreateDatabaseAsVersion(int version, String... statements) {
+        PodDBAdapter.tearDownTests();
+        File databaseFile = context.getDatabasePath(PodDBAdapter.DATABASE_NAME);
+        if (databaseFile.exists() && !databaseFile.delete()) {
+            throw new IllegalStateException("Could not delete database file");
+        }
+        SQLiteDatabase database = SQLiteDatabase.openOrCreateDatabase(databaseFile, null);
+        for (String statement : statements) {
+            database.execSQL(statement);
+        }
+        database.setVersion(version);
+        database.close();
     }
 
     @Test
