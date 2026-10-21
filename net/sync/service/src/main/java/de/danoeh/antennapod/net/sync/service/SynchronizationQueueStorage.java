@@ -19,6 +19,9 @@ public class SynchronizationQueueStorage {
     private static final String QUEUED_EPISODE_ACTIONS = "sync_queued_episode_actions";
     private static final String QUEUED_FEEDS_REMOVED = "sync_removed";
     private static final String QUEUED_FEEDS_ADDED = "sync_added";
+    private static final String PLAYLISTS_DIRTY = "sync_playlists_dirty";
+    private static final String LAST_PULLED_PLAYLISTS = "sync_playlists_last_pulled";
+    private static final String LAST_PULLED_PLAYLISTS_FEEDS_HASH = "sync_playlists_last_pulled_feeds_hash";
     private final SharedPreferences sharedPreferences;
 
     public SynchronizationQueueStorage(Context context) {
@@ -84,12 +87,39 @@ public class SynchronizationQueueStorage {
                 .apply();
     }
 
+    public boolean isPlaylistsDirty() {
+        return getSharedPreferences().getBoolean(PLAYLISTS_DIRTY, false);
+    }
+
+    public void setPlaylistsDirty(boolean dirty) {
+        getSharedPreferences().edit().putBoolean(PLAYLISTS_DIRTY, dirty).apply();
+    }
+
+    public String getLastPulledPlaylists() {
+        return getSharedPreferences().getString(LAST_PULLED_PLAYLISTS, null);
+    }
+
+    public void setLastPulledPlaylists(String payload) {
+        getSharedPreferences().edit().putString(LAST_PULLED_PLAYLISTS, payload).apply();
+    }
+
+    public int getLastPulledPlaylistsFeedsHash() {
+        return getSharedPreferences().getInt(LAST_PULLED_PLAYLISTS_FEEDS_HASH, 0);
+    }
+
+    public void setLastPulledPlaylistsFeedsHash(int hash) {
+        getSharedPreferences().edit().putInt(LAST_PULLED_PLAYLISTS_FEEDS_HASH, hash).apply();
+    }
+
     protected void clearQueue() {
         SynchronizationSettings.resetTimestamps();
         getSharedPreferences().edit()
                 .putString(QUEUED_EPISODE_ACTIONS, "[]")
                 .putString(QUEUED_FEEDS_ADDED, "[]")
                 .putString(QUEUED_FEEDS_REMOVED, "[]")
+                .putBoolean(PLAYLISTS_DIRTY, false)
+                .remove(LAST_PULLED_PLAYLISTS)
+                .remove(LAST_PULLED_PLAYLISTS_FEEDS_HASH)
                 .apply();
 
     }

@@ -37,6 +37,8 @@ import de.danoeh.antennapod.model.feed.FeedItem;
 import de.danoeh.antennapod.model.feed.FeedItemFilter;
 import de.danoeh.antennapod.model.feed.FeedMedia;
 import de.danoeh.antennapod.model.feed.FeedPreferences;
+import de.danoeh.antennapod.model.feed.Playlist;
+import de.danoeh.antennapod.model.feed.PlaylistFeedSettings;
 import de.danoeh.antennapod.model.download.DownloadResult;
 import de.danoeh.antennapod.model.feed.SortOrder;
 import de.danoeh.antennapod.storage.database.mapper.FeedItemFilterQuery;
@@ -55,7 +57,7 @@ public class PodDBAdapter {
 
     private static final String TAG = "PodDBAdapter";
     public static final String DATABASE_NAME = "Antennapod.db";
-    public static final int VERSION = 3110000;
+    public static final int VERSION = 3110002;
 
     /**
      * Maximum number of arguments for IN-operator.
@@ -128,6 +130,10 @@ public class PodDBAdapter {
     public static final String KEY_STATE = "state";
     public static final String KEY_PODCASTINDEX_TRANSCRIPT_URL = "podcastindex_transcript_url";
     public static final String KEY_PODCASTINDEX_TRANSCRIPT_TYPE = "podcastindex_transcript_type";
+    public static final String KEY_PLAYLIST = "playlist";
+    public static final String KEY_FILTER_UNPLAYED = "filter_unplayed";
+    public static final String KEY_FILTER_DOWNLOADED = "filter_downloaded";
+    public static final String KEY_MAX_AGE_DAYS = "max_age_days";
 
     // Table names
     public static final String TABLE_NAME_FEEDS = "Feeds";
@@ -138,6 +144,8 @@ public class PodDBAdapter {
     public static final String TABLE_NAME_QUEUE = "Queue";
     public static final String TABLE_NAME_SIMPLECHAPTERS = "SimpleChapters";
     public static final String TABLE_NAME_FAVORITES = "Favorites";
+    public static final String TABLE_NAME_PLAYLISTS = "Playlists";
+    public static final String TABLE_NAME_PLAYLIST_FEEDS = "PlaylistFeeds";
 
     // SQL Statements for creating new tables
     private static final String TABLE_PRIMARY_KEY = KEY_ID
@@ -251,6 +259,17 @@ public class PodDBAdapter {
             + TABLE_NAME_FAVORITES + "(" + KEY_ID + " INTEGER PRIMARY KEY,"
             + KEY_FEEDITEM + " INTEGER," + KEY_FEED + " INTEGER)";
 
+    static final String CREATE_TABLE_PLAYLISTS = "CREATE TABLE "
+            + TABLE_NAME_PLAYLISTS + " (" + TABLE_PRIMARY_KEY
+            + KEY_TITLE + " TEXT)";
+
+    static final String CREATE_TABLE_PLAYLIST_FEEDS = "CREATE TABLE "
+            + TABLE_NAME_PLAYLIST_FEEDS + " (" + TABLE_PRIMARY_KEY
+            + KEY_PLAYLIST + " INTEGER," + KEY_FEED + " INTEGER,"
+            + KEY_FILTER_UNPLAYED + " INTEGER DEFAULT 0,"
+            + KEY_FILTER_DOWNLOADED + " INTEGER DEFAULT 0,"
+            + KEY_MAX_AGE_DAYS + " INTEGER DEFAULT 0)";
+
     /**
      * All the tables in the database
      */
@@ -261,7 +280,9 @@ public class PodDBAdapter {
             TABLE_NAME_DOWNLOAD_LOG,
             TABLE_NAME_QUEUE,
             TABLE_NAME_SIMPLECHAPTERS,
-            TABLE_NAME_FAVORITES
+            TABLE_NAME_FAVORITES,
+            TABLE_NAME_PLAYLISTS,
+            TABLE_NAME_PLAYLIST_FEEDS
     };
 
     public static final String SELECT_KEY_ITEM_ID = "item_id";
@@ -912,6 +933,155 @@ public class PodDBAdapter {
         db.delete(TABLE_NAME_QUEUE, null, null);
     }
 
+    public final Cursor getPlaylistsCursor() {
+        final String query = "SELECT " + KEY_ID + ", " + KEY_TITLE
+                + " FROM " + TABLE_NAME_PLAYLISTS
+                + " ORDER BY " + KEY_TITLE + " COLLATE NOCASE ASC";
+        return db.rawQuery(query, null);
+    }
+
+    public final Cursor getPlaylistFeedSettingsCursor(long playlistId) {
+        return db.query(TABLE_NAME_PLAYLIST_FEEDS,
+                new String[]{KEY_FEED, KEY_FILTER_UNPLAYED, KEY_FILTER_DOWNLOADED, KEY_MAX_AGE_DAYS},
+                KEY_PLAYLIST + "=?",
+                new String[]{String.valueOf(playlistId)}, null, null, null);
+    }
+
+    public final Cursor getFeedLatestEpisodeDatesCursor() {
+        final String query = "SELECT " + KEY_FEED + ", MAX(" + KEY_PUBDATE + ")"
+                + " FROM " + TABLE_NAME_FEED_ITEMS
+                + " GROUP BY " + KEY_FEED;
+        return db.rawQuery(query, null);
+    }
+
+    public final Cursor getFeedPlaylistCountsCursor() {
+        final String query = "SELECT " + KEY_FEED + ", COUNT(" + KEY_PLAYLIST + ")"
+                + " FROM " + TABLE_NAME_PLAYLIST_FEEDS
+                + " GROUP BY " + KEY_FEED;
+        return db.rawQuery(query, null);
+    }
+
+    public long createPlaylist(Playlist playlist) {
+        ContentValues values = new ContentValues();
+        values.put(KEY_TITLE, playlist.getName());
+        long playlistId = db.insert(TABLE_NAME_PLAYLISTS, null, values);
+        playlist.setId(playlistId);
+        setPlaylistFeeds(playlistId, playlist.getFeedSettings());
+        return playlistId;
+    }
+
+    public void updatePlaylist(Playlist playlist) {
+        ContentValues values = new ContentValues();
+        values.put(KEY_TITLE, playlist.getName());
+        db.update(TABLE_NAME_PLAYLISTS, values, KEY_ID + "=?",
+                new String[]{String.valueOf(playlist.getId())});
+        setPlaylistFeeds(playlist.getId(), playlist.getFeedSettings());
+    }
+
+    private void setPlaylistFeeds(long playlistId, List<PlaylistFeedSettings> feedSettings) {
+        db.beginTransactionNonExclusive();
+        try {
+            db.delete(TABLE_NAME_PLAYLIST_FEEDS, KEY_PLAYLIST + "=?",
+                    new String[]{String.valueOf(playlistId)});
+            for (PlaylistFeedSettings settings : feedSettings) {
+                ContentValues values = new ContentValues();
+                values.put(KEY_PLAYLIST, playlistId);
+                values.put(KEY_FEED, settings.getFeedId());
+                values.put(KEY_FILTER_UNPLAYED, settings.isFilterUnplayed());
+                values.put(KEY_FILTER_DOWNLOADED, settings.isFilterDownloaded());
+                values.put(KEY_MAX_AGE_DAYS, settings.getMaxAgeDays());
+                db.insertWithOnConflict(TABLE_NAME_PLAYLIST_FEEDS, null, values,
+                        SQLiteDatabase.CONFLICT_IGNORE);
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    public void deletePlaylist(long playlistId) {
+        try {
+            db.beginTransactionNonExclusive();
+            db.delete(TABLE_NAME_PLAYLISTS, KEY_ID + "=?", new String[]{String.valueOf(playlistId)});
+            db.delete(TABLE_NAME_PLAYLIST_FEEDS, KEY_PLAYLIST + "=?",
+                    new String[]{String.valueOf(playlistId)});
+            db.setTransactionSuccessful();
+        } catch (SQLException e) {
+            Log.e(TAG, Log.getStackTraceString(e));
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    /**
+     * Replaces all playlists with the given list, in one transaction.
+     */
+    public void replacePlaylists(List<Playlist> playlists) {
+        try {
+            db.beginTransactionNonExclusive();
+            db.delete(TABLE_NAME_PLAYLISTS, null, null);
+            db.delete(TABLE_NAME_PLAYLIST_FEEDS, null, null);
+            for (Playlist playlist : playlists) {
+                createPlaylist(playlist);
+            }
+            db.setTransactionSuccessful();
+        } catch (SQLException e) {
+            Log.e(TAG, Log.getStackTraceString(e));
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    private String playlistItemWhereClause(Playlist playlist) {
+        List<PlaylistFeedSettings> feedSettings = playlist.getFeedSettings();
+        if (feedSettings.isEmpty()) {
+            return " WHERE 0"; // An empty playlist matches nothing
+        }
+        StringBuilder where = new StringBuilder(" WHERE (");
+        for (int i = 0; i < feedSettings.size(); i++) {
+            PlaylistFeedSettings settings = feedSettings.get(i);
+            if (i > 0) {
+                where.append(" OR ");
+            }
+            where.append("(").append(TABLE_NAME_FEED_ITEMS).append(".").append(KEY_FEED)
+                    .append("=").append(settings.getFeedId());
+            if (settings.isFilterUnplayed()) {
+                where.append(" AND NOT ").append(TABLE_NAME_FEED_ITEMS).append(".")
+                        .append(KEY_READ).append("=1");
+            }
+            if (settings.isFilterDownloaded()) {
+                where.append(" AND (").append(TABLE_NAME_FEED_MEDIA).append(".")
+                        .append(KEY_DOWNLOAD_DATE).append(">0 OR ")
+                        .append(TABLE_NAME_FEED_ITEMS).append(".").append(KEY_FEED)
+                        .append(" IN (SELECT ").append(KEY_ID).append(" FROM ")
+                        .append(TABLE_NAME_FEEDS).append(" WHERE ").append(KEY_DOWNLOAD_URL)
+                        .append(" LIKE '").append(Feed.PREFIX_LOCAL_FOLDER).append("%'))");
+            }
+            if (settings.hasMaxAge()) {
+                long cutoff = System.currentTimeMillis() - settings.getMaxAgeDays() * 24L * 3600L * 1000L;
+                where.append(" AND ").append(TABLE_NAME_FEED_ITEMS).append(".").append(KEY_PUBDATE)
+                        .append(">=").append(cutoff);
+            }
+            where.append(")");
+        }
+        where.append(")");
+        return where.toString();
+    }
+
+    public final Cursor getPlaylistEpisodesCursor(Playlist playlist, int offset, int limit) {
+        final String query = SELECT_FEED_ITEMS_AND_MEDIA + playlistItemWhereClause(playlist)
+                + " ORDER BY " + TABLE_NAME_FEED_ITEMS + "." + KEY_PUBDATE + " DESC"
+                + " LIMIT " + offset + ", " + limit;
+        return db.rawQuery(query, null);
+    }
+
+    public final Cursor getPlaylistEpisodeCountCursor(Playlist playlist) {
+        final String query = "SELECT count(" + TABLE_NAME_FEED_ITEMS + "." + KEY_ID + ")"
+                + " FROM " + TABLE_NAME_FEED_ITEMS
+                + JOIN_FEED_ITEM_AND_MEDIA + playlistItemWhereClause(playlist);
+        return db.rawQuery(query, null);
+    }
+
     /**
      * Remove the listed items and their FeedMedia entries.
      */
@@ -959,6 +1129,9 @@ public class PodDBAdapter {
             // delete download log entries for feed
             db.delete(TABLE_NAME_DOWNLOAD_LOG, KEY_FEEDFILE + "=? AND " + KEY_FEEDFILETYPE + "=?",
                     new String[]{String.valueOf(feed.getId()), String.valueOf(Feed.FEEDFILETYPE_FEED)});
+
+            db.delete(TABLE_NAME_PLAYLIST_FEEDS, KEY_FEED + "=?",
+                    new String[]{String.valueOf(feed.getId())});
 
             db.delete(TABLE_NAME_FEEDS, KEY_ID + "=?",
                     new String[]{String.valueOf(feed.getId())});
@@ -1599,6 +1772,8 @@ public class PodDBAdapter {
             db.execSQL(CREATE_TABLE_QUEUE);
             db.execSQL(CREATE_TABLE_SIMPLECHAPTERS);
             db.execSQL(CREATE_TABLE_FAVORITES);
+            db.execSQL(CREATE_TABLE_PLAYLISTS);
+            db.execSQL(CREATE_TABLE_PLAYLIST_FEEDS);
 
             db.execSQL(CREATE_INDEX_FEEDITEMS_FEED);
             db.execSQL(CREATE_INDEX_FEEDITEMS_PUBDATE);
