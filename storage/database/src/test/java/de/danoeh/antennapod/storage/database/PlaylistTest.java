@@ -10,7 +10,6 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
@@ -19,9 +18,12 @@ import de.danoeh.antennapod.model.feed.Feed;
 import de.danoeh.antennapod.model.feed.FeedItem;
 import de.danoeh.antennapod.model.feed.FeedMedia;
 import de.danoeh.antennapod.model.feed.Playlist;
+import de.danoeh.antennapod.model.feed.PlaylistFeedSettings;
 import de.danoeh.antennapod.storage.preferences.UserPreferences;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(RobolectricTestRunner.class)
@@ -51,9 +53,15 @@ public class PlaylistTest {
     @Test
     public void testCreateUpdateDeletePlaylist() {
         Playlist playlist = new Playlist(0, "News");
-        playlist.setFilterUnplayed(true);
-        playlist.setMaxAgeDays(3);
-        playlist.setFeedIds(Arrays.asList(1L, 2L));
+        PlaylistFeedSettings first = new PlaylistFeedSettings(1L);
+        first.setFilterUnplayed(true);
+        first.setMaxAgeDays(3);
+        PlaylistFeedSettings second = new PlaylistFeedSettings(2L);
+        second.setFilterDownloaded(true);
+        List<PlaylistFeedSettings> settingsList = new ArrayList<>();
+        settingsList.add(first);
+        settingsList.add(second);
+        playlist.setFeedSettings(settingsList);
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
         adapter.createPlaylist(playlist);
@@ -63,14 +71,19 @@ public class PlaylistTest {
         List<Playlist> playlists = DBReader.getPlaylists();
         assertEquals(1, playlists.size());
         assertEquals("News", playlists.get(0).getName());
-        assertTrue(playlists.get(0).isFilterUnplayed());
-        assertEquals(3, playlists.get(0).getMaxAgeDays());
-        assertEquals(Arrays.asList(1L, 2L), playlists.get(0).getFeedIds());
+        assertEquals(2, playlists.get(0).getFeedSettings().size());
+
+        PlaylistFeedSettings storedFirst = playlists.get(0).getFeedSettings(1L);
+        assertNotNull(storedFirst);
+        assertTrue(storedFirst.isFilterUnplayed());
+        assertEquals(3, storedFirst.getMaxAgeDays());
+        PlaylistFeedSettings storedSecond = playlists.get(0).getFeedSettings(2L);
+        assertNotNull(storedSecond);
+        assertTrue(storedSecond.isFilterDownloaded());
+        assertEquals(0, storedSecond.getMaxAgeDays());
 
         playlist.setName("News fresh");
-        playlist.setFilterUnplayed(false);
-        playlist.setMaxAgeDays(0);
-        playlist.setFeedIds(Collections.singletonList(1L));
+        playlist.setFeedSettings(Collections.singletonList(new PlaylistFeedSettings(3L)));
         adapter.open();
         adapter.updatePlaylist(playlist);
         adapter.close();
@@ -78,9 +91,9 @@ public class PlaylistTest {
         playlists = DBReader.getPlaylists();
         assertEquals(1, playlists.size());
         assertEquals("News fresh", playlists.get(0).getName());
-        assertTrue(!playlists.get(0).isFilterUnplayed());
-        assertEquals(0, playlists.get(0).getMaxAgeDays());
-        assertEquals(Collections.singletonList(1L), playlists.get(0).getFeedIds());
+        assertEquals(1, playlists.get(0).getFeedSettings().size());
+        assertEquals(3L, playlists.get(0).getFeedSettings().get(0).getFeedId());
+        assertEquals(0, playlists.get(0).getFeedSettings().get(0).getMaxAgeDays());
 
         adapter.open();
         adapter.deletePlaylist(playlist.getId());
@@ -94,7 +107,7 @@ public class PlaylistTest {
         Feed feedB = createPersistedFeedWithItems("feed-b", 2, FeedItem.UNPLAYED, true);
 
         Playlist playlist = new Playlist(0, "A only");
-        playlist.setFeedIds(Collections.singletonList(feedA.getId()));
+        playlist.getFeedSettings().add(new PlaylistFeedSettings(feedA.getId()));
         createPlaylist(playlist);
 
         List<FeedItem> episodes = DBReader.getPlaylistEpisodes(playlist, 0, Integer.MAX_VALUE);
@@ -109,7 +122,7 @@ public class PlaylistTest {
     public void testPlaylistWithoutFiltersShowsAllEpisodes() {
         Feed feed = createPersistedFeedWithItems("feed", 3, FeedItem.PLAYED, false);
         Playlist playlist = new Playlist(0, "All");
-        playlist.setFeedIds(Collections.singletonList(feed.getId()));
+        playlist.getFeedSettings().add(new PlaylistFeedSettings(feed.getId()));
         createPlaylist(playlist);
 
         assertEquals(3, DBReader.getPlaylistEpisodes(playlist, 0, Integer.MAX_VALUE).size());
@@ -126,8 +139,9 @@ public class PlaylistTest {
         persistFeed(feed);
 
         Playlist playlist = new Playlist(0, "Unplayed");
-        playlist.setFilterUnplayed(true);
-        playlist.setFeedIds(Collections.singletonList(feed.getId()));
+        PlaylistFeedSettings settings = new PlaylistFeedSettings(feed.getId());
+        settings.setFilterUnplayed(true);
+        playlist.getFeedSettings().add(settings);
         createPlaylist(playlist);
 
         List<FeedItem> episodes = DBReader.getPlaylistEpisodes(playlist, 0, Integer.MAX_VALUE);
@@ -146,8 +160,9 @@ public class PlaylistTest {
         persistFeed(feed);
 
         Playlist playlist = new Playlist(0, "Downloaded");
-        playlist.setFilterDownloaded(true);
-        playlist.setFeedIds(Collections.singletonList(feed.getId()));
+        PlaylistFeedSettings settings = new PlaylistFeedSettings(feed.getId());
+        settings.setFilterDownloaded(true);
+        playlist.getFeedSettings().add(settings);
         createPlaylist(playlist);
 
         List<FeedItem> episodes = DBReader.getPlaylistEpisodes(playlist, 0, Integer.MAX_VALUE);
@@ -166,8 +181,9 @@ public class PlaylistTest {
         persistFeed(feed);
 
         Playlist playlist = new Playlist(0, "Fresh");
-        playlist.setMaxAgeDays(5);
-        playlist.setFeedIds(Collections.singletonList(feed.getId()));
+        PlaylistFeedSettings settings = new PlaylistFeedSettings(feed.getId());
+        settings.setMaxAgeDays(5);
+        playlist.getFeedSettings().add(settings);
         createPlaylist(playlist);
 
         List<FeedItem> episodes = DBReader.getPlaylistEpisodes(playlist, 0, Integer.MAX_VALUE);
@@ -189,15 +205,43 @@ public class PlaylistTest {
         persistFeed(feed);
 
         Playlist playlist = new Playlist(0, "Combined");
-        playlist.setFilterUnplayed(true);
-        playlist.setFilterDownloaded(true);
-        playlist.setMaxAgeDays(5);
-        playlist.setFeedIds(Collections.singletonList(feed.getId()));
+        PlaylistFeedSettings settings = new PlaylistFeedSettings(feed.getId());
+        settings.setFilterUnplayed(true);
+        settings.setFilterDownloaded(true);
+        settings.setMaxAgeDays(5);
+        playlist.getFeedSettings().add(settings);
         createPlaylist(playlist);
 
         List<FeedItem> episodes = DBReader.getPlaylistEpisodes(playlist, 0, Integer.MAX_VALUE);
         assertEquals(1, episodes.size());
         assertEquals("match", episodes.get(0).getTitle());
+    }
+
+    @Test
+    public void testPerFeedSettingsAreIndependent() {
+        long now = System.currentTimeMillis();
+        Feed feedA = new Feed("feed-a", null, "Feed A");
+        feedA.setItems(new ArrayList<>());
+        addItem(feedA, "a-unplayed", now, FeedItem.UNPLAYED, true);
+        addItem(feedA, "a-played", now, FeedItem.PLAYED, true);
+        persistFeed(feedA);
+        Feed feedB = new Feed("feed-b", null, "Feed B");
+        feedB.setItems(new ArrayList<>());
+        addItem(feedB, "b-played", now, FeedItem.PLAYED, true);
+        persistFeed(feedB);
+
+        Playlist playlist = new Playlist(0, "Independent");
+        PlaylistFeedSettings settingsA = new PlaylistFeedSettings(feedA.getId());
+        settingsA.setFilterUnplayed(true);
+        playlist.getFeedSettings().add(settingsA);
+        playlist.getFeedSettings().add(new PlaylistFeedSettings(feedB.getId())); // No filters
+        createPlaylist(playlist);
+
+        List<FeedItem> episodes = DBReader.getPlaylistEpisodes(playlist, 0, Integer.MAX_VALUE);
+        assertEquals(2, episodes.size()); // A's unplayed item plus B's played item
+        PlaylistFeedSettings reloaded = DBReader.getPlaylists().get(0).getFeedSettings(feedA.getId());
+        assertNotNull(reloaded);
+        assertTrue(reloaded.isFilterUnplayed());
     }
 
     @Test
@@ -211,7 +255,7 @@ public class PlaylistTest {
         persistFeed(feed);
 
         Playlist playlist = new Playlist(0, "Ordered");
-        playlist.setFeedIds(Collections.singletonList(feed.getId()));
+        playlist.getFeedSettings().add(new PlaylistFeedSettings(feed.getId()));
         createPlaylist(playlist);
 
         List<FeedItem> all = DBReader.getPlaylistEpisodes(playlist, 0, Integer.MAX_VALUE);
@@ -231,7 +275,7 @@ public class PlaylistTest {
     public void testEmptyFeedSelectionMatchesNothing() {
         createPersistedFeedWithItems("feed", 2, FeedItem.UNPLAYED, true);
         Playlist playlist = new Playlist(0, "Empty");
-        playlist.setFeedIds(Collections.emptyList());
+        playlist.setFeedSettings(Collections.emptyList());
         createPlaylist(playlist);
 
         assertEquals(0, DBReader.getPlaylistEpisodes(playlist, 0, Integer.MAX_VALUE).size());
@@ -242,7 +286,7 @@ public class PlaylistTest {
     public void testFeedDeletionRemovesPlaylistAssociation() {
         Feed feed = createPersistedFeedWithItems("feed", 2, FeedItem.UNPLAYED, true);
         Playlist playlist = new Playlist(0, "Doomed");
-        playlist.setFeedIds(Collections.singletonList(feed.getId()));
+        playlist.getFeedSettings().add(new PlaylistFeedSettings(feed.getId()));
         createPlaylist(playlist);
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
@@ -251,8 +295,22 @@ public class PlaylistTest {
         adapter.close();
 
         Playlist reloaded = DBReader.getPlaylists().get(0);
-        assertEquals(Collections.emptyList(), reloaded.getFeedIds());
+        assertEquals(Collections.emptyList(), reloaded.getFeedSettings());
         assertEquals(0, DBReader.getPlaylistEpisodeCount(playlist));
+    }
+
+    @Test
+    public void testFeedPickerData() {
+        Feed feedA = createPersistedFeedWithItems("feed-a", 2, FeedItem.UNPLAYED, true);
+        Feed feedB = createPersistedFeedWithItems("feed-b", 3, FeedItem.UNPLAYED, true);
+        Playlist playlist = new Playlist(0, "Counts");
+        playlist.getFeedSettings().add(new PlaylistFeedSettings(feedA.getId()));
+        createPlaylist(playlist);
+
+        assertEquals(feedB.getItems().get(0).getPubDate(),
+                DBReader.getFeedLatestEpisodeDates().get(feedB.getId()));
+        assertEquals(Integer.valueOf(1), DBReader.getFeedPlaylistCounts().get(feedA.getId()));
+        assertNull(DBReader.getFeedPlaylistCounts().get(feedB.getId()));
     }
 
     private void createPlaylist(Playlist playlist) {

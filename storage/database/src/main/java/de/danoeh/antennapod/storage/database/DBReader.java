@@ -10,6 +10,7 @@ import androidx.collection.ArrayMap;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +24,7 @@ import de.danoeh.antennapod.model.feed.FeedMedia;
 import de.danoeh.antennapod.model.feed.FeedOrder;
 import de.danoeh.antennapod.model.feed.FeedPreferences;
 import de.danoeh.antennapod.model.feed.Playlist;
+import de.danoeh.antennapod.model.feed.PlaylistFeedSettings;
 import de.danoeh.antennapod.model.feed.SortOrder;
 import de.danoeh.antennapod.model.feed.SubscriptionsFilter;
 import de.danoeh.antennapod.model.download.DownloadResult;
@@ -217,7 +219,8 @@ public final class DBReader {
     /**
      * Loads all playlists.
      *
-     * @return A list of playlists sorted alphabetically by their name, each with its feed IDs loaded.
+     * @return A list of playlists sorted alphabetically by their name,
+     *         each with its per-podcast settings loaded.
      */
     @NonNull
     public static synchronized List<Playlist> getPlaylists() {
@@ -229,10 +232,7 @@ public final class DBReader {
             List<Playlist> playlists = new ArrayList<>(cursor.getCount());
             while (cursor.moveToNext()) {
                 Playlist playlist = new Playlist(cursor.getLong(0), cursor.getString(1));
-                playlist.setFilterUnplayed(cursor.getInt(2) > 0);
-                playlist.setFilterDownloaded(cursor.getInt(3) > 0);
-                playlist.setMaxAgeDays(cursor.getInt(4));
-                playlist.setFeedIds(readPlaylistFeedIds(adapter, playlist.getId()));
+                playlist.setFeedSettings(readPlaylistFeedSettings(adapter, playlist.getId()));
                 playlists.add(playlist);
             }
             return playlists;
@@ -241,13 +241,59 @@ public final class DBReader {
         }
     }
 
-    private static List<Long> readPlaylistFeedIds(PodDBAdapter adapter, long playlistId) {
-        try (Cursor cursor = adapter.getPlaylistFeedIdsCursor(playlistId)) {
-            List<Long> feedIds = new ArrayList<>(cursor.getCount());
+    private static List<PlaylistFeedSettings> readPlaylistFeedSettings(PodDBAdapter adapter, long playlistId) {
+        try (Cursor cursor = adapter.getPlaylistFeedSettingsCursor(playlistId)) {
+            List<PlaylistFeedSettings> feedSettings = new ArrayList<>(cursor.getCount());
             while (cursor.moveToNext()) {
-                feedIds.add(cursor.getLong(0));
+                PlaylistFeedSettings settings = new PlaylistFeedSettings(cursor.getLong(0));
+                settings.setFilterUnplayed(cursor.getInt(1) > 0);
+                settings.setFilterDownloaded(cursor.getInt(2) > 0);
+                settings.setMaxAgeDays(cursor.getInt(3));
+                feedSettings.add(settings);
             }
-            return feedIds;
+            return feedSettings;
+        }
+    }
+
+    /**
+     * Loads the release date of the most recent episode of each feed.
+     *
+     * @return A map from feed ID to the publication date of the feed's most recent episode.
+     *         Feeds without episodes are not included.
+     */
+    @NonNull
+    public static synchronized Map<Long, Date> getFeedLatestEpisodeDates() {
+        PodDBAdapter adapter = PodDBAdapter.getInstance();
+        adapter.open();
+        try (Cursor cursor = adapter.getFeedLatestEpisodeDatesCursor()) {
+            Map<Long, Date> dates = new ArrayMap<>(cursor.getCount());
+            while (cursor.moveToNext()) {
+                dates.put(cursor.getLong(0), new Date(cursor.getLong(1)));
+            }
+            return dates;
+        } finally {
+            adapter.close();
+        }
+    }
+
+    /**
+     * Loads the number of playlists each feed is currently part of.
+     *
+     * @return A map from feed ID to the number of playlists containing the feed.
+     *         Feeds that are not part of any playlist are not included.
+     */
+    @NonNull
+    public static synchronized Map<Long, Integer> getFeedPlaylistCounts() {
+        PodDBAdapter adapter = PodDBAdapter.getInstance();
+        adapter.open();
+        try (Cursor cursor = adapter.getFeedPlaylistCountsCursor()) {
+            Map<Long, Integer> counts = new ArrayMap<>(cursor.getCount());
+            while (cursor.moveToNext()) {
+                counts.put(cursor.getLong(0), cursor.getInt(1));
+            }
+            return counts;
+        } finally {
+            adapter.close();
         }
     }
 

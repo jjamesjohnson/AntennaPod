@@ -38,6 +38,7 @@ import de.danoeh.antennapod.model.feed.FeedItemFilter;
 import de.danoeh.antennapod.model.feed.FeedMedia;
 import de.danoeh.antennapod.model.feed.FeedPreferences;
 import de.danoeh.antennapod.model.feed.Playlist;
+import de.danoeh.antennapod.model.feed.PlaylistFeedSettings;
 import de.danoeh.antennapod.model.download.DownloadResult;
 import de.danoeh.antennapod.model.feed.SortOrder;
 import de.danoeh.antennapod.storage.database.mapper.FeedItemFilterQuery;
@@ -56,7 +57,7 @@ public class PodDBAdapter {
 
     private static final String TAG = "PodDBAdapter";
     public static final String DATABASE_NAME = "Antennapod.db";
-    public static final int VERSION = 3110001;
+    public static final int VERSION = 3110002;
 
     /**
      * Maximum number of arguments for IN-operator.
@@ -260,14 +261,14 @@ public class PodDBAdapter {
 
     static final String CREATE_TABLE_PLAYLISTS = "CREATE TABLE "
             + TABLE_NAME_PLAYLISTS + " (" + TABLE_PRIMARY_KEY
-            + KEY_TITLE + " TEXT,"
-            + KEY_FILTER_UNPLAYED + " INTEGER DEFAULT 0,"
-            + KEY_FILTER_DOWNLOADED + " INTEGER DEFAULT 0,"
-            + KEY_MAX_AGE_DAYS + " INTEGER DEFAULT 0)";
+            + KEY_TITLE + " TEXT)";
 
     static final String CREATE_TABLE_PLAYLIST_FEEDS = "CREATE TABLE "
             + TABLE_NAME_PLAYLIST_FEEDS + " (" + TABLE_PRIMARY_KEY
-            + KEY_PLAYLIST + " INTEGER," + KEY_FEED + " INTEGER)";
+            + KEY_PLAYLIST + " INTEGER," + KEY_FEED + " INTEGER,"
+            + KEY_FILTER_UNPLAYED + " INTEGER DEFAULT 0,"
+            + KEY_FILTER_DOWNLOADED + " INTEGER DEFAULT 0,"
+            + KEY_MAX_AGE_DAYS + " INTEGER DEFAULT 0)";
 
     /**
      * All the tables in the database
@@ -933,49 +934,68 @@ public class PodDBAdapter {
     }
 
     public final Cursor getPlaylistsCursor() {
-        final String query = "SELECT " + KEY_ID + ", " + KEY_TITLE + ", " + KEY_FILTER_UNPLAYED + ", "
-                + KEY_FILTER_DOWNLOADED + ", " + KEY_MAX_AGE_DAYS
+        final String query = "SELECT " + KEY_ID + ", " + KEY_TITLE
                 + " FROM " + TABLE_NAME_PLAYLISTS
                 + " ORDER BY " + KEY_TITLE + " COLLATE NOCASE ASC";
         return db.rawQuery(query, null);
     }
 
-    public final Cursor getPlaylistFeedIdsCursor(long playlistId) {
-        return db.query(TABLE_NAME_PLAYLIST_FEEDS, new String[]{KEY_FEED}, KEY_PLAYLIST + "=?",
+    public final Cursor getPlaylistFeedSettingsCursor(long playlistId) {
+        return db.query(TABLE_NAME_PLAYLIST_FEEDS,
+                new String[]{KEY_FEED, KEY_FILTER_UNPLAYED, KEY_FILTER_DOWNLOADED, KEY_MAX_AGE_DAYS},
+                KEY_PLAYLIST + "=?",
                 new String[]{String.valueOf(playlistId)}, null, null, null);
+    }
+
+    public final Cursor getFeedLatestEpisodeDatesCursor() {
+        final String query = "SELECT " + KEY_FEED + ", MAX(" + KEY_PUBDATE + ")"
+                + " FROM " + TABLE_NAME_FEED_ITEMS
+                + " GROUP BY " + KEY_FEED;
+        return db.rawQuery(query, null);
+    }
+
+    public final Cursor getFeedPlaylistCountsCursor() {
+        final String query = "SELECT " + KEY_FEED + ", COUNT(" + KEY_PLAYLIST + ")"
+                + " FROM " + TABLE_NAME_PLAYLIST_FEEDS
+                + " GROUP BY " + KEY_FEED;
+        return db.rawQuery(query, null);
     }
 
     public long createPlaylist(Playlist playlist) {
         ContentValues values = new ContentValues();
         values.put(KEY_TITLE, playlist.getName());
-        values.put(KEY_FILTER_UNPLAYED, playlist.isFilterUnplayed());
-        values.put(KEY_FILTER_DOWNLOADED, playlist.isFilterDownloaded());
-        values.put(KEY_MAX_AGE_DAYS, playlist.getMaxAgeDays());
         long playlistId = db.insert(TABLE_NAME_PLAYLISTS, null, values);
         playlist.setId(playlistId);
-        setPlaylistFeeds(playlistId, playlist.getFeedIds());
+        setPlaylistFeeds(playlistId, playlist.getFeedSettings());
         return playlistId;
     }
 
     public void updatePlaylist(Playlist playlist) {
         ContentValues values = new ContentValues();
         values.put(KEY_TITLE, playlist.getName());
-        values.put(KEY_FILTER_UNPLAYED, playlist.isFilterUnplayed());
-        values.put(KEY_FILTER_DOWNLOADED, playlist.isFilterDownloaded());
-        values.put(KEY_MAX_AGE_DAYS, playlist.getMaxAgeDays());
         db.update(TABLE_NAME_PLAYLISTS, values, KEY_ID + "=?",
                 new String[]{String.valueOf(playlist.getId())});
-        setPlaylistFeeds(playlist.getId(), playlist.getFeedIds());
+        setPlaylistFeeds(playlist.getId(), playlist.getFeedSettings());
     }
 
-    private void setPlaylistFeeds(long playlistId, List<Long> feedIds) {
-        db.delete(TABLE_NAME_PLAYLIST_FEEDS, KEY_PLAYLIST + "=?",
-                new String[]{String.valueOf(playlistId)});
-        for (Long feedId : feedIds) {
-            ContentValues values = new ContentValues();
-            values.put(KEY_PLAYLIST, playlistId);
-            values.put(KEY_FEED, feedId);
-            db.insertWithOnConflict(TABLE_NAME_PLAYLIST_FEEDS, null, values, SQLiteDatabase.CONFLICT_IGNORE);
+    private void setPlaylistFeeds(long playlistId, List<PlaylistFeedSettings> feedSettings) {
+        db.beginTransactionNonExclusive();
+        try {
+            db.delete(TABLE_NAME_PLAYLIST_FEEDS, KEY_PLAYLIST + "=?",
+                    new String[]{String.valueOf(playlistId)});
+            for (PlaylistFeedSettings settings : feedSettings) {
+                ContentValues values = new ContentValues();
+                values.put(KEY_PLAYLIST, playlistId);
+                values.put(KEY_FEED, settings.getFeedId());
+                values.put(KEY_FILTER_UNPLAYED, settings.isFilterUnplayed());
+                values.put(KEY_FILTER_DOWNLOADED, settings.isFilterDownloaded());
+                values.put(KEY_MAX_AGE_DAYS, settings.getMaxAgeDays());
+                db.insertWithOnConflict(TABLE_NAME_PLAYLIST_FEEDS, null, values,
+                        SQLiteDatabase.CONFLICT_IGNORE);
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
         }
     }
 
@@ -994,30 +1014,38 @@ public class PodDBAdapter {
     }
 
     private String playlistItemWhereClause(Playlist playlist) {
-        List<String> filterValues = new ArrayList<>();
-        if (playlist.isFilterUnplayed()) {
-            filterValues.add(FeedItemFilter.UNPLAYED);
+        List<PlaylistFeedSettings> feedSettings = playlist.getFeedSettings();
+        if (feedSettings.isEmpty()) {
+            return " WHERE 0"; // An empty playlist matches nothing
         }
-        if (playlist.isFilterDownloaded()) {
-            filterValues.add(FeedItemFilter.DOWNLOADED);
+        StringBuilder where = new StringBuilder(" WHERE (");
+        for (int i = 0; i < feedSettings.size(); i++) {
+            PlaylistFeedSettings settings = feedSettings.get(i);
+            if (i > 0) {
+                where.append(" OR ");
+            }
+            where.append("(").append(TABLE_NAME_FEED_ITEMS).append(".").append(KEY_FEED)
+                    .append("=").append(settings.getFeedId());
+            if (settings.isFilterUnplayed()) {
+                where.append(" AND NOT ").append(TABLE_NAME_FEED_ITEMS).append(".")
+                        .append(KEY_READ).append("=1");
+            }
+            if (settings.isFilterDownloaded()) {
+                where.append(" AND (").append(TABLE_NAME_FEED_MEDIA).append(".")
+                        .append(KEY_DOWNLOAD_DATE).append(">0 OR ")
+                        .append(TABLE_NAME_FEED_ITEMS).append(".").append(KEY_FEED)
+                        .append(" IN (SELECT ").append(KEY_ID).append(" FROM ")
+                        .append(TABLE_NAME_FEEDS).append(" WHERE ").append(KEY_DOWNLOAD_URL)
+                        .append(" LIKE '").append(Feed.PREFIX_LOCAL_FOLDER).append("%'))");
+            }
+            if (settings.hasMaxAge()) {
+                long cutoff = System.currentTimeMillis() - settings.getMaxAgeDays() * 24L * 3600L * 1000L;
+                where.append(" AND ").append(TABLE_NAME_FEED_ITEMS).append(".").append(KEY_PUBDATE)
+                        .append(">=").append(cutoff);
+            }
+            where.append(")");
         }
-        filterValues.add(FeedItemFilter.INCLUDE_SUBSCRIBED);
-        filterValues.add(FeedItemFilter.INCLUDE_ARCHIVED);
-        filterValues.add(FeedItemFilter.INCLUDE_NOT_SUBSCRIBED);
-        String filterQuery = FeedItemFilterQuery.generateFrom(
-                new FeedItemFilter(filterValues.toArray(new String[0])));
-        StringBuilder where = new StringBuilder(" WHERE ")
-                .append(TABLE_NAME_FEED_ITEMS).append(".").append(KEY_FEED)
-                .append(" IN (SELECT ").append(KEY_FEED).append(" FROM ").append(TABLE_NAME_PLAYLIST_FEEDS)
-                .append(" WHERE ").append(KEY_PLAYLIST).append("=").append(playlist.getId()).append(")");
-        if (!"".equals(filterQuery)) {
-            where.append(" AND ").append(filterQuery);
-        }
-        if (playlist.hasMaxAge()) {
-            long cutoff = System.currentTimeMillis() - playlist.getMaxAgeDays() * 24L * 3600L * 1000L;
-            where.append(" AND ").append(TABLE_NAME_FEED_ITEMS).append(".").append(KEY_PUBDATE)
-                    .append(" >= ").append(cutoff);
-        }
+        where.append(")");
         return where.toString();
     }
 

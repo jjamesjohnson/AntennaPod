@@ -9,14 +9,9 @@ import java.util.List;
  */
 public class Playlist implements Serializable {
 
-    public static final int MAX_AGE_DISABLED = 0;
-
     private long id;
     private String name;
-    private List<Long> feedIds = new ArrayList<>();
-    private boolean filterUnplayed = false;
-    private boolean filterDownloaded = false;
-    private int maxAgeDays = MAX_AGE_DISABLED;
+    private List<PlaylistFeedSettings> feedSettings = new ArrayList<>();
 
     public Playlist() {
     }
@@ -42,39 +37,20 @@ public class Playlist implements Serializable {
         this.name = name;
     }
 
-    public List<Long> getFeedIds() {
-        return feedIds;
+    public List<PlaylistFeedSettings> getFeedSettings() {
+        return feedSettings;
     }
 
-    public void setFeedIds(List<Long> feedIds) {
-        this.feedIds = feedIds;
+    public void setFeedSettings(List<PlaylistFeedSettings> feedSettings) {
+        this.feedSettings = feedSettings;
     }
 
-    public boolean isFilterUnplayed() {
-        return filterUnplayed;
-    }
-
-    public void setFilterUnplayed(boolean filterUnplayed) {
-        this.filterUnplayed = filterUnplayed;
-    }
-
-    public boolean isFilterDownloaded() {
-        return filterDownloaded;
-    }
-
-    public void setFilterDownloaded(boolean filterDownloaded) {
-        this.filterDownloaded = filterDownloaded;
-    }
-
-    public int getMaxAgeDays() {
-        return maxAgeDays;
-    }
-
-    public void setMaxAgeDays(int maxAgeDays) {
-        this.maxAgeDays = maxAgeDays;
-    }
-
-    public boolean hasMaxAge() {
-        return maxAgeDays > MAX_AGE_DISABLED;
+    public PlaylistFeedSettings getFeedSettings(long feedId) {
+        for (PlaylistFeedSettings settings : feedSettings) {
+            if (settings.getFeedId() == feedId) {
+                return settings;
+            }
+        }
+        return null;
     }
 }

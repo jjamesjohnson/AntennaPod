@@ -17,6 +17,7 @@ import java.util.Collections;
 import java.util.List;
 
 import de.danoeh.antennapod.R;
+import de.danoeh.antennapod.event.FeedItemEvent;
 import de.danoeh.antennapod.event.MessageEvent;
 import de.danoeh.antennapod.event.PlaylistEvent;
 import de.danoeh.antennapod.model.feed.FeedItem;
@@ -149,20 +150,9 @@ public class PlaylistFragment extends EpisodesListFragment {
 
     @Override
     protected FeedItemFilter getFilter() {
-        if (playlist == null) {
-            return FeedItemFilter.unfiltered();
-        }
-        List<String> filterValues = new ArrayList<>();
-        if (playlist.isFilterUnplayed()) {
-            filterValues.add(FeedItemFilter.UNPLAYED);
-        }
-        if (playlist.isFilterDownloaded()) {
-            filterValues.add(FeedItemFilter.DOWNLOADED);
-        }
-        filterValues.add(FeedItemFilter.INCLUDE_SUBSCRIBED);
-        filterValues.add(FeedItemFilter.INCLUDE_ARCHIVED);
-        filterValues.add(FeedItemFilter.INCLUDE_NOT_SUBSCRIBED);
-        return new FeedItemFilter(filterValues.toArray(new String[0]));
+        // The playlist's criteria are per-podcast and can not be expressed in a single
+        // FeedItemFilter. Episode events are handled with a full reload instead.
+        return FeedItemFilter.unfiltered();
     }
 
     @Override
@@ -178,8 +168,8 @@ public class PlaylistFragment extends EpisodesListFragment {
     }
 
     @Override
-    protected void onItemsFirstLoaded() {
-        swipeActions.setFilter(getFilter());
+    public void onEventMainThread(FeedItemEvent event) {
+        loadItems();
     }
 
     @Subscribe(threadMode = ThreadMode.MAIN)

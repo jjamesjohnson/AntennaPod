@@ -359,6 +359,28 @@ class DBUpgrader {
             db.execSQL(PodDBAdapter.CREATE_TABLE_PLAYLISTS);
             db.execSQL(PodDBAdapter.CREATE_TABLE_PLAYLIST_FEEDS);
         }
+        if (oldVersion < 3110002) {
+            db.execSQL("ALTER TABLE " + PodDBAdapter.TABLE_NAME_PLAYLIST_FEEDS
+                    + " ADD COLUMN " + PodDBAdapter.KEY_FILTER_UNPLAYED + " INTEGER DEFAULT 0");
+            db.execSQL("ALTER TABLE " + PodDBAdapter.TABLE_NAME_PLAYLIST_FEEDS
+                    + " ADD COLUMN " + PodDBAdapter.KEY_FILTER_DOWNLOADED + " INTEGER DEFAULT 0");
+            db.execSQL("ALTER TABLE " + PodDBAdapter.TABLE_NAME_PLAYLIST_FEEDS
+                    + " ADD COLUMN " + PodDBAdapter.KEY_MAX_AGE_DAYS + " INTEGER DEFAULT 0");
+            // Copy playlist-wide flags onto every podcast row, so playlists keep their behavior
+            db.execSQL("UPDATE " + PodDBAdapter.TABLE_NAME_PLAYLIST_FEEDS + " SET "
+                    + PodDBAdapter.KEY_FILTER_UNPLAYED + " = (SELECT " + PodDBAdapter.KEY_FILTER_UNPLAYED
+                    + " FROM " + PodDBAdapter.TABLE_NAME_PLAYLISTS
+                    + " WHERE " + PodDBAdapter.TABLE_NAME_PLAYLISTS + "." + PodDBAdapter.KEY_ID
+                    + " = " + PodDBAdapter.TABLE_NAME_PLAYLIST_FEEDS + "." + PodDBAdapter.KEY_PLAYLIST + "), "
+                    + PodDBAdapter.KEY_FILTER_DOWNLOADED + " = (SELECT " + PodDBAdapter.KEY_FILTER_DOWNLOADED
+                    + " FROM " + PodDBAdapter.TABLE_NAME_PLAYLISTS
+                    + " WHERE " + PodDBAdapter.TABLE_NAME_PLAYLISTS + "." + PodDBAdapter.KEY_ID
+                    + " = " + PodDBAdapter.TABLE_NAME_PLAYLIST_FEEDS + "." + PodDBAdapter.KEY_PLAYLIST + "), "
+                    + PodDBAdapter.KEY_MAX_AGE_DAYS + " = (SELECT " + PodDBAdapter.KEY_MAX_AGE_DAYS
+                    + " FROM " + PodDBAdapter.TABLE_NAME_PLAYLISTS
+                    + " WHERE " + PodDBAdapter.TABLE_NAME_PLAYLISTS + "." + PodDBAdapter.KEY_ID
+                    + " = " + PodDBAdapter.TABLE_NAME_PLAYLIST_FEEDS + "." + PodDBAdapter.KEY_PLAYLIST + ")");
+        }
     }
 
 }

@@ -4,30 +4,41 @@ import android.app.Dialog;
 import android.content.DialogInterface;
 import android.os.Bundle;
 import android.text.TextUtils;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
-import androidx.core.util.Pair;
 import androidx.fragment.app.DialogFragment;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.greenrobot.eventbus.EventBus;
 
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 import de.danoeh.antennapod.R;
+import de.danoeh.antennapod.databinding.AddPlaylistFeedRowBinding;
 import de.danoeh.antennapod.databinding.EditPlaylistBinding;
+import de.danoeh.antennapod.databinding.EditPlaylistFeedOptionsBinding;
+import de.danoeh.antennapod.databinding.EditPlaylistFeedRowBinding;
 import de.danoeh.antennapod.event.MessageEvent;
 import de.danoeh.antennapod.model.feed.Feed;
 import de.danoeh.antennapod.model.feed.Playlist;
+import de.danoeh.antennapod.model.feed.PlaylistFeedSettings;
 import de.danoeh.antennapod.storage.database.DBReader;
 import de.danoeh.antennapod.storage.database.DBWriter;
 import de.danoeh.antennapod.ui.common.ConfirmationDialog;
+import de.danoeh.antennapod.ui.common.DateFormatter;
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.core.Observable;
 import io.reactivex.rxjava3.disposables.Disposable;
@@ -35,6 +46,7 @@ import io.reactivex.rxjava3.schedulers.Schedulers;
 
 /**
  * Creates a new playlist or edits an existing one.
+ * All podcast rows and their options are staged in this dialog and persisted on OK.
  */
 public class EditPlaylistDialog extends DialogFragment {
 
@@ -44,7 +56,10 @@ public class EditPlaylistDialog extends DialogFragment {
     private EditPlaylistBinding binding;
     private Disposable disposable;
     private final List<Feed> feeds = new ArrayList<>();
-    private final Set<Long> selectedFeedIds = new HashSet<>();
+    private final Map<Long, Date> latestEpisodeDates = new HashMap<>();
+    private final Map<Long, Integer> playlistCounts = new HashMap<>();
+    private final List<PlaylistFeedSettings> feedSettings = new ArrayList<>();
+    private FeedSettingsAdapter feedSettingsAdapter;
     private long playlistId = 0;
 
     public static EditPlaylistDialog newInstance() {
@@ -66,7 +81,10 @@ public class EditPlaylistDialog extends DialogFragment {
             playlistId = getArguments().getLong(ARGUMENT_PLAYLIST_ID, 0);
         }
         binding = EditPlaylistBinding.inflate(getLayoutInflater());
-        binding.selectPodcastsButton.setOnClickListener(v -> showSelectPodcastsDialog());
+        feedSettingsAdapter = new FeedSettingsAdapter();
+        binding.feedList.setLayoutManager(new LinearLayoutManager(requireContext()));
+        binding.feedList.setAdapter(feedSettingsAdapter);
+        binding.addFeedButton.setOnClickListener(v -> showFeedPicker());
 
         MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(requireContext())
                 .setTitle(playlistId == 0 ? R.string.new_playlist_label : R.string.edit_playlist_label)
@@ -89,7 +107,6 @@ public class EditPlaylistDialog extends DialogFragment {
 
     private void loadData() {
         disposable = Observable.fromCallable(() -> {
-            List<Feed> feedList = DBReader.getFeedList();
             Playlist playlist = null;
             if (playlistId != 0) {
                 for (Playlist candidate : DBReader.getPlaylists()) {
@@ -99,48 +116,220 @@ public class EditPlaylistDialog extends DialogFragment {
                     }
                 }
             }
-            return new Pair<>(feedList, playlist);
+            return new LoadedData(DBReader.getFeedList(), DBReader.getFeedLatestEpisodeDates(),
+                    DBReader.getFeedPlaylistCounts(), playlist);
         })
                 .subscribeOn(Schedulers.computation())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(this::onDataLoaded);
     }
 
-    private void onDataLoaded(Pair<List<Feed>, Playlist> data) {
+    private void onDataLoaded(LoadedData data) {
         feeds.clear();
-        feeds.addAll(data.first);
-        if (data.second != null) {
-            Playlist playlist = data.second;
-            binding.playlistNameInput.setText(playlist.getName());
-            binding.filterUnplayedCheckbox.setChecked(playlist.isFilterUnplayed());
-            binding.filterDownloadedCheckbox.setChecked(playlist.isFilterDownloaded());
-            binding.maxAgeDaysInput.setText(
-                    playlist.hasMaxAge() ? String.valueOf(playlist.getMaxAgeDays()) : "");
-            selectedFeedIds.addAll(playlist.getFeedIds());
+        feeds.addAll(data.feeds);
+        latestEpisodeDates.clear();
+        latestEpisodeDates.putAll(data.latestEpisodeDates);
+        playlistCounts.clear();
+        playlistCounts.putAll(data.playlistCounts);
+        if (data.playlist != null) {
+            binding.playlistNameInput.setText(data.playlist.getName());
+            feedSettings.clear();
+            for (PlaylistFeedSettings settings : data.playlist.getFeedSettings()) {
+                feedSettings.add(copySettings(settings));
+            }
+        }
+        feedSettingsAdapter.notifyDataSetChanged();
+    }
+
+    private static PlaylistFeedSettings copySettings(PlaylistFeedSettings settings) {
+        PlaylistFeedSettings copy = new PlaylistFeedSettings(settings.getFeedId());
+        copy.setFilterUnplayed(settings.isFilterUnplayed());
+        copy.setFilterDownloaded(settings.isFilterDownloaded());
+        copy.setMaxAgeDays(settings.getMaxAgeDays());
+        return copy;
+    }
+
+    @Nullable
+    private Feed getFeedById(long feedId) {
+        for (Feed feed : feeds) {
+            if (feed.getId() == feedId) {
+                return feed;
+            }
+        }
+        return null;
+    }
+
+    private class FeedSettingsAdapter extends RecyclerView.Adapter<FeedSettingsAdapter.Holder> {
+
+        @NonNull
+        @Override
+        public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            return new Holder(EditPlaylistFeedRowBinding.inflate(
+                    LayoutInflater.from(parent.getContext()), parent, false));
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull Holder holder, int position) {
+            PlaylistFeedSettings settings = feedSettings.get(position);
+            Feed feed = getFeedById(settings.getFeedId());
+            holder.binding.txtvFeedTitle.setText(feed != null ? feed.getTitle() : "");
+            holder.binding.txtvFeedOptions.setText(buildOptionsSummary(settings));
+            holder.binding.imgvEditFeed.setOnClickListener(v -> {
+                if (feed != null) {
+                    showFeedOptionsDialog(feed, settings);
+                }
+            });
+            holder.binding.imgvRemoveFeed.setOnClickListener(v -> {
+                int adapterPosition = holder.getAdapterPosition();
+                if (adapterPosition != RecyclerView.NO_POSITION) {
+                    feedSettings.remove(adapterPosition);
+                    notifyItemRemoved(adapterPosition);
+                }
+            });
+        }
+
+        @Override
+        public int getItemCount() {
+            return feedSettings.size();
+        }
+
+        class Holder extends RecyclerView.ViewHolder {
+            final EditPlaylistFeedRowBinding binding;
+
+            Holder(EditPlaylistFeedRowBinding binding) {
+                super(binding.getRoot());
+                this.binding = binding;
+            }
         }
     }
 
-    private void showSelectPodcastsDialog() {
-        List<String> feedTitles = new ArrayList<>();
+    private String buildOptionsSummary(PlaylistFeedSettings settings) {
+        List<String> parts = new ArrayList<>();
+        if (settings.isFilterUnplayed()) {
+            parts.add(getString(R.string.playlist_summary_unplayed_label));
+        }
+        if (settings.isFilterDownloaded()) {
+            parts.add(getString(R.string.playlist_summary_downloaded_label));
+        }
+        if (settings.hasMaxAge()) {
+            parts.add(getString(R.string.playlist_summary_max_age_label, settings.getMaxAgeDays()));
+        }
+        if (parts.isEmpty()) {
+            return getString(R.string.playlist_summary_all_label);
+        }
+        return TextUtils.join(" · ", parts);
+    }
+
+    private void showFeedPicker() {
+        final List<Feed> pickerFeeds = new ArrayList<>();
         for (Feed feed : feeds) {
-            feedTitles.add(feed.getTitle());
+            if (getStagedSettings(feed.getId()) == null) {
+                pickerFeeds.add(feed);
+            }
         }
-        boolean[] checkedItems = new boolean[feeds.size()];
-        for (int i = 0; i < feeds.size(); i++) {
-            checkedItems[i] = selectedFeedIds.contains(feeds.get(i).getId());
+        if (pickerFeeds.isEmpty()) {
+            EventBus.getDefault().post(
+                    new MessageEvent(getString(R.string.playlist_all_podcasts_added_label)));
+            return;
         }
+        ArrayAdapter<Feed> adapter = new ArrayAdapter<Feed>(
+                requireContext(), R.layout.add_playlist_feed_row, pickerFeeds) {
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                AddPlaylistFeedRowBinding rowBinding;
+                if (convertView == null) {
+                    rowBinding = AddPlaylistFeedRowBinding.inflate(
+                            LayoutInflater.from(parent.getContext()), parent, false);
+                    convertView = rowBinding.getRoot();
+                    convertView.setTag(rowBinding);
+                } else {
+                    rowBinding = (AddPlaylistFeedRowBinding) convertView.getTag();
+                }
+                Feed feed = getItem(position);
+                rowBinding.txtvFeedTitle.setText(feed.getTitle());
+                Date latest = latestEpisodeDates.get(feed.getId());
+                if (latest != null) {
+                    rowBinding.txtvLatestEpisode.setText(getString(R.string.playlist_latest_episode_label,
+                            DateFormatter.formatAbbrev(getContext(), latest)));
+                    rowBinding.txtvLatestEpisode.setVisibility(View.VISIBLE);
+                } else {
+                    rowBinding.txtvLatestEpisode.setVisibility(View.GONE);
+                }
+                Integer count = playlistCounts.get(feed.getId());
+                if (count != null && count > 0) {
+                    rowBinding.txtvPlaylistCount.setText(getString(R.string.playlist_in_playlists_label, count));
+                    rowBinding.txtvPlaylistCount.setVisibility(View.VISIBLE);
+                } else {
+                    rowBinding.txtvPlaylistCount.setVisibility(View.GONE);
+                }
+                return convertView;
+            }
+        };
         new MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.playlist_select_podcasts_label)
-                .setMultiChoiceItems(feedTitles.toArray(new String[0]), checkedItems,
-                        (dialog, which, isChecked) -> {
-                            if (isChecked) {
-                                selectedFeedIds.add(feeds.get(which).getId());
-                            } else {
-                                selectedFeedIds.remove(feeds.get(which).getId());
-                            }
-                        })
-                .setPositiveButton(android.R.string.ok, null)
+                .setAdapter(adapter, (dialog, which) -> showFeedOptionsDialog(pickerFeeds.get(which), null))
+                .setNegativeButton(R.string.cancel_label, null)
                 .show();
+    }
+
+    @Nullable
+    private PlaylistFeedSettings getStagedSettings(long feedId) {
+        for (PlaylistFeedSettings settings : feedSettings) {
+            if (settings.getFeedId() == feedId) {
+                return settings;
+            }
+        }
+        return null;
+    }
+
+    private void showFeedOptionsDialog(Feed feed, @Nullable PlaylistFeedSettings settings) {
+        final PlaylistFeedSettings edited =
+                settings != null ? settings : new PlaylistFeedSettings(feed.getId());
+        final EditPlaylistFeedOptionsBinding optionsBinding =
+                EditPlaylistFeedOptionsBinding.inflate(getLayoutInflater());
+        optionsBinding.filterUnplayedCheckbox.setChecked(edited.isFilterUnplayed());
+        optionsBinding.filterDownloadedCheckbox.setChecked(edited.isFilterDownloaded());
+        optionsBinding.maxAgeDaysInput.setText(edited.hasMaxAge()
+                ? String.valueOf(edited.getMaxAgeDays()) : "");
+        AlertDialog dialog = new MaterialAlertDialogBuilder(requireContext())
+                .setTitle(feed.getTitle())
+                .setView(optionsBinding.getRoot())
+                .setPositiveButton(android.R.string.ok, null)
+                .setNegativeButton(R.string.cancel_label, null)
+                .show();
+
+        // To prevent dismissing the dialog on validation errors
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            if (applyFeedOptions(optionsBinding, feed, edited)) {
+                dialog.dismiss();
+            }
+        });
+    }
+
+    private boolean applyFeedOptions(EditPlaylistFeedOptionsBinding optionsBinding,
+                                    Feed feed, PlaylistFeedSettings edited) {
+        int maxAgeDays = 0;
+        String maxAgeDaysText = optionsBinding.maxAgeDaysInput.getText().toString().trim();
+        if (!TextUtils.isEmpty(maxAgeDaysText)) {
+            try {
+                maxAgeDays = Integer.parseInt(maxAgeDaysText);
+            } catch (NumberFormatException e) {
+                EventBus.getDefault().post(
+                        new MessageEvent(getString(R.string.playlist_filter_max_age_label)));
+                return false;
+            }
+            if (maxAgeDays < 0) {
+                maxAgeDays = 0;
+            }
+        }
+        edited.setFilterUnplayed(optionsBinding.filterUnplayedCheckbox.isChecked());
+        edited.setFilterDownloaded(optionsBinding.filterDownloadedCheckbox.isChecked());
+        edited.setMaxAgeDays(maxAgeDays);
+        if (getStagedSettings(feed.getId()) == null) {
+            feedSettings.add(edited);
+        }
+        feedSettingsAdapter.notifyDataSetChanged();
+        return true;
     }
 
     private void savePlaylist() {
@@ -149,29 +338,13 @@ public class EditPlaylistDialog extends DialogFragment {
             EventBus.getDefault().post(new MessageEvent(getString(R.string.playlist_name_empty_error)));
             return;
         }
-        if (selectedFeedIds.isEmpty()) {
+        if (feedSettings.isEmpty()) {
             EventBus.getDefault().post(new MessageEvent(getString(R.string.playlist_no_podcasts_error)));
             return;
         }
-        int maxAgeDays = 0;
-        String maxAgeDaysText = binding.maxAgeDaysInput.getText().toString().trim();
-        if (!TextUtils.isEmpty(maxAgeDaysText)) {
-            try {
-                maxAgeDays = Integer.parseInt(maxAgeDaysText);
-            } catch (NumberFormatException e) {
-                EventBus.getDefault().post(new MessageEvent(getString(R.string.playlist_filter_max_age_label)));
-                return;
-            }
-            if (maxAgeDays < 0) {
-                maxAgeDays = 0;
-            }
-        }
 
         Playlist playlist = new Playlist(playlistId, name);
-        playlist.setFilterUnplayed(binding.filterUnplayedCheckbox.isChecked());
-        playlist.setFilterDownloaded(binding.filterDownloadedCheckbox.isChecked());
-        playlist.setMaxAgeDays(maxAgeDays);
-        playlist.setFeedIds(new ArrayList<>(selectedFeedIds));
+        playlist.setFeedSettings(new ArrayList<>(feedSettings));
         if (playlistId == 0) {
             DBWriter.createPlaylist(playlist);
         } else {
@@ -198,6 +371,21 @@ public class EditPlaylistDialog extends DialogFragment {
         super.onDestroy();
         if (disposable != null) {
             disposable.dispose();
+        }
+    }
+
+    private static class LoadedData {
+        final List<Feed> feeds;
+        final Map<Long, Date> latestEpisodeDates;
+        final Map<Long, Integer> playlistCounts;
+        final Playlist playlist;
+
+        LoadedData(List<Feed> feeds, Map<Long, Date> latestEpisodeDates,
+                   Map<Long, Integer> playlistCounts, Playlist playlist) {
+            this.feeds = feeds;
+            this.latestEpisodeDates = latestEpisodeDates;
+            this.playlistCounts = playlistCounts;
+            this.playlist = playlist;
         }
     }
 }
