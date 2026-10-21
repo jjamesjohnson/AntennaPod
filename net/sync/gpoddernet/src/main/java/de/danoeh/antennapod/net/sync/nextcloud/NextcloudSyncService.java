@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.net.MalformedURLException;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class NextcloudSyncService implements ISyncService {
     private static final int UPLOAD_BULK_SIZE = 30;
@@ -151,6 +152,15 @@ public class NextcloudSyncService implements ISyncService {
                 .host(hostname.host)
                 .port(hostname.port)
                 .addPathSegments(StringUtils.stripStart(hostname.subfolder + path, "/"));
+    }
+
+    @Override
+    public String getAccountSettings() {
+        return null; // The Nextcloud gpoddersync app does not implement the settings API
+    }
+
+    @Override
+    public void uploadAccountSettings(Map<String, String> settings) {
     }
 
     @Override

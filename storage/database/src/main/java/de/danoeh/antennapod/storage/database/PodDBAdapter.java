@@ -1013,6 +1013,25 @@ public class PodDBAdapter {
         }
     }
 
+    /**
+     * Replaces all playlists with the given list, in one transaction.
+     */
+    public void replacePlaylists(List<Playlist> playlists) {
+        try {
+            db.beginTransactionNonExclusive();
+            db.delete(TABLE_NAME_PLAYLISTS, null, null);
+            db.delete(TABLE_NAME_PLAYLIST_FEEDS, null, null);
+            for (Playlist playlist : playlists) {
+                createPlaylist(playlist);
+            }
+            db.setTransactionSuccessful();
+        } catch (SQLException e) {
+            Log.e(TAG, Log.getStackTraceString(e));
+        } finally {
+            db.endTransaction();
+        }
+    }
+
     private String playlistItemWhereClause(Playlist playlist) {
         List<PlaylistFeedSettings> feedSettings = playlist.getFeedSettings();
         if (feedSettings.isEmpty()) {

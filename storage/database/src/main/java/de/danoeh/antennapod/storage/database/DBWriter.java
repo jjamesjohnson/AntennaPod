@@ -193,6 +193,7 @@ public class DBWriter {
 
             if (!feed.isLocalFeed() && feed.getState() != Feed.STATE_NOT_SUBSCRIBED) {
                 SynchronizationQueue.getInstance().enqueueFeedRemoved(feed.getDownloadUrl());
+                SynchronizationQueue.getInstance().enqueuePlaylistChange();
             }
             EventBus.getDefault().post(new FeedListUpdateEvent(feed));
         });
@@ -619,6 +620,7 @@ public class DBWriter {
             adapter.open();
             adapter.createPlaylist(playlist);
             adapter.close();
+            SynchronizationQueue.getInstance().enqueuePlaylistChange();
             EventBus.getDefault().post(PlaylistEvent.created(playlist.getId()));
         });
     }
@@ -632,6 +634,7 @@ public class DBWriter {
             adapter.open();
             adapter.updatePlaylist(playlist);
             adapter.close();
+            SynchronizationQueue.getInstance().enqueuePlaylistChange();
             EventBus.getDefault().post(PlaylistEvent.updated(playlist.getId()));
         });
     }
@@ -645,7 +648,21 @@ public class DBWriter {
             adapter.open();
             adapter.deletePlaylist(playlist.getId());
             adapter.close();
+            SynchronizationQueue.getInstance().enqueuePlaylistChange();
             EventBus.getDefault().post(PlaylistEvent.deleted(playlist.getId()));
+        });
+    }
+
+    /**
+     * Replaces all playlists, typically after pulling from sync server.
+     */
+    public static Future<?> replacePlaylists(final Context context, final List<Playlist> playlists) {
+        return runOnDbThread(() -> {
+            final PodDBAdapter adapter = PodDBAdapter.getInstance();
+            adapter.open();
+            adapter.replacePlaylists(playlists);
+            adapter.close();
+            EventBus.getDefault().post(PlaylistEvent.updatedAll());
         });
     }
 

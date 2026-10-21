@@ -372,6 +372,31 @@ public class PlaylistTest {
     }
 
     @Test
+    public void testReplacePlaylists() {
+        Feed feedA = createPersistedFeedWithItems("feed-a", 1, FeedItem.UNPLAYED, true);
+        createPersistedFeedWithItems("feed-b", 1, FeedItem.UNPLAYED, true);
+        Playlist original = new Playlist(0, "Original");
+        original.getFeedSettings().add(new PlaylistFeedSettings(feedA.getId()));
+        createPlaylist(original);
+
+        Playlist incoming = new Playlist(0, "Synced");
+        incoming.getFeedSettings().add(new PlaylistFeedSettings(1L));
+        Playlist incoming2 = new Playlist(0, "Synced 2");
+        incoming2.getFeedSettings().add(new PlaylistFeedSettings(2L));
+        PodDBAdapter adapter = PodDBAdapter.getInstance();
+        adapter.open();
+        adapter.replacePlaylists(java.util.Arrays.asList(incoming, incoming2));
+        adapter.close();
+
+        List<Playlist> playlists = DBReader.getPlaylists();
+        assertEquals(2, playlists.size());
+        assertEquals("Synced", playlists.get(0).getName());
+        assertEquals("Synced 2", playlists.get(1).getName());
+        assertEquals(1L, playlists.get(0).getFeedSettings().get(0).getFeedId());
+        assertEquals(2L, playlists.get(1).getFeedSettings().get(0).getFeedId());
+    }
+
+    @Test
     public void testFeedPickerData() {
         Feed feedA = createPersistedFeedWithItems("feed-a", 2, FeedItem.UNPLAYED, true);
         Feed feedB = createPersistedFeedWithItems("feed-b", 3, FeedItem.UNPLAYED, true);

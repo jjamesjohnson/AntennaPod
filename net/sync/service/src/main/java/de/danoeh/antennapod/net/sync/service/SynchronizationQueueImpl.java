@@ -132,4 +132,14 @@ public class SynchronizationQueueImpl extends SynchronizationQueue {
                 .build();
         enqueueEpisodeAction(action);
     }
+
+    @Override
+    public void enqueuePlaylistChange() {
+        LockingAsyncExecutor.executeLockedAsync(() -> {
+            new SynchronizationQueueStorage(context).setPlaylistsDirty(true);
+            if (SynchronizationSettings.isProviderConnected()) {
+                sync();
+            }
+        });
+    }
 }

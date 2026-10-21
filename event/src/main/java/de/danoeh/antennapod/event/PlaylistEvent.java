@@ -25,4 +25,8 @@ public class PlaylistEvent {
     public static PlaylistEvent deleted(long playlistId) {
         return new PlaylistEvent(Action.DELETED, playlistId);
     }
+
+    public static PlaylistEvent updatedAll() {
+        return new PlaylistEvent(Action.UPDATED, 0);
+    }
 }

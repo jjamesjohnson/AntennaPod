@@ -178,7 +178,8 @@ public class PlaylistFragment extends EpisodesListFragment {
                 && event.playlistId == requireArguments().getLong(ARGUMENT_PLAYLIST_ID)) {
             getParentFragmentManager().popBackStack();
         } else if (event.action == PlaylistEvent.Action.UPDATED
-                && event.playlistId == requireArguments().getLong(ARGUMENT_PLAYLIST_ID)) {
+                && (event.playlistId == 0
+                || event.playlistId == requireArguments().getLong(ARGUMENT_PLAYLIST_ID))) {
             playlist = null;
             loadItems();
         }
