@@ -29,6 +29,7 @@
     <string name="new_playlist_label">New playlist</string>
     <string name="delete_playlist_label">Delete playlist</string>
     <string name="edit_playlist_label">Edit playlist</string>
+    <string name="edit_playlist_name_label">Edit name</string>
     <string name="playlist_name_label">Name</string>
     <string name="playlist_filter_unplayed_label">Only unplayed episodes</string>
     <string name="playlist_filter_downloaded_label">Only downloaded episodes</string>
