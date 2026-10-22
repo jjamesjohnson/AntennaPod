@@ -7,7 +7,6 @@ import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ArrayAdapter;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -27,7 +26,7 @@ import java.util.List;
 import java.util.Map;
 
 import de.danoeh.antennapod.R;
-import de.danoeh.antennapod.databinding.AddPlaylistFeedRowBinding;
+import de.danoeh.antennapod.activity.MainActivity;
 import de.danoeh.antennapod.databinding.EditPlaylistBinding;
 import de.danoeh.antennapod.databinding.EditPlaylistFeedOptionsBinding;
 import de.danoeh.antennapod.databinding.EditPlaylistFeedRowBinding;
@@ -38,7 +37,7 @@ import de.danoeh.antennapod.model.feed.PlaylistFeedSettings;
 import de.danoeh.antennapod.storage.database.DBReader;
 import de.danoeh.antennapod.storage.database.DBWriter;
 import de.danoeh.antennapod.ui.common.ConfirmationDialog;
-import de.danoeh.antennapod.ui.common.DateFormatter;
+import de.danoeh.antennapod.ui.common.databinding.EditTextDialogBinding;
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.core.Observable;
 import io.reactivex.rxjava3.disposables.Disposable;
@@ -61,6 +60,7 @@ public class EditPlaylistDialog extends DialogFragment {
     private final List<PlaylistFeedSettings> feedSettings = new ArrayList<>();
     private FeedSettingsAdapter feedSettingsAdapter;
     private long playlistId = 0;
+    private String playlistName;
 
     public static EditPlaylistDialog newInstance() {
         return new EditPlaylistDialog();
@@ -85,6 +85,21 @@ public class EditPlaylistDialog extends DialogFragment {
         binding.feedList.setLayoutManager(new LinearLayoutManager(requireContext()));
         binding.feedList.setAdapter(feedSettingsAdapter);
         binding.addFeedButton.setOnClickListener(v -> showFeedPicker());
+
+        requireActivity().getSupportFragmentManager().setFragmentResultListener(
+                SelectPlaylistFeedsFragment.REQUEST_KEY, this, (requestKey, bundle) -> {
+                    Dialog dialog = getDialog();
+                    if (dialog != null && !dialog.isShowing()) {
+                        dialog.show();
+                    }
+                    long feedId = bundle.getLong(SelectPlaylistFeedsFragment.RESULT_FEED_ID, 0);
+                    if (feedId != 0) {
+                        Feed feed = getFeedById(feedId);
+                        if (feed != null) {
+                            showFeedOptionsDialog(feed, null);
+                        }
+                    }
+                });
 
         MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(requireContext())
                 .setTitle(playlistId == 0 ? R.string.new_playlist_label : R.string.edit_playlist_label)
@@ -132,11 +147,18 @@ public class EditPlaylistDialog extends DialogFragment {
         playlistCounts.clear();
         playlistCounts.putAll(data.playlistCounts);
         if (data.playlist != null) {
-            binding.playlistNameInput.setText(data.playlist.getName());
+            playlistName = data.playlist.getName();
+            binding.playlistNameDisplay.setText(playlistName);
+            binding.playlistNameInputLayout.setVisibility(View.GONE);
+            binding.playlistNameDisplayLayout.setVisibility(View.VISIBLE);
+            binding.playlistNameEdit.setOnClickListener(v -> showEditNameDialog());
             feedSettings.clear();
             for (PlaylistFeedSettings settings : data.playlist.getFeedSettings()) {
                 feedSettings.add(copySettings(settings));
             }
+        } else {
+            binding.playlistNameInputLayout.setVisibility(View.VISIBLE);
+            binding.playlistNameDisplayLayout.setVisibility(View.GONE);
         }
         feedSettingsAdapter.notifyDataSetChanged();
     }
@@ -221,55 +243,19 @@ public class EditPlaylistDialog extends DialogFragment {
     }
 
     private void showFeedPicker() {
-        final List<Feed> pickerFeeds = new ArrayList<>();
         for (Feed feed : feeds) {
             if (getStagedSettings(feed.getId()) == null) {
-                pickerFeeds.add(feed);
+                Dialog dialog = getDialog();
+                if (dialog != null) {
+                    dialog.hide();
+                }
+                ((MainActivity) requireActivity()).loadChildFragment(
+                        SelectPlaylistFeedsFragment.newInstance(playlistId));
+                return;
             }
         }
-        if (pickerFeeds.isEmpty()) {
-            EventBus.getDefault().post(
-                    new MessageEvent(getString(R.string.playlist_all_podcasts_added_label)));
-            return;
-        }
-        ArrayAdapter<Feed> adapter = new ArrayAdapter<Feed>(
-                requireContext(), R.layout.add_playlist_feed_row, pickerFeeds) {
-            @Override
-            public View getView(int position, View convertView, ViewGroup parent) {
-                AddPlaylistFeedRowBinding rowBinding;
-                if (convertView == null) {
-                    rowBinding = AddPlaylistFeedRowBinding.inflate(
-                            LayoutInflater.from(parent.getContext()), parent, false);
-                    convertView = rowBinding.getRoot();
-                    convertView.setTag(rowBinding);
-                } else {
-                    rowBinding = (AddPlaylistFeedRowBinding) convertView.getTag();
-                }
-                Feed feed = getItem(position);
-                rowBinding.txtvFeedTitle.setText(feed.getTitle());
-                Date latest = latestEpisodeDates.get(feed.getId());
-                if (latest != null) {
-                    rowBinding.txtvLatestEpisode.setText(getString(R.string.playlist_latest_episode_label,
-                            DateFormatter.formatAbbrev(getContext(), latest)));
-                    rowBinding.txtvLatestEpisode.setVisibility(View.VISIBLE);
-                } else {
-                    rowBinding.txtvLatestEpisode.setVisibility(View.GONE);
-                }
-                Integer count = playlistCounts.get(feed.getId());
-                if (count != null && count > 0) {
-                    rowBinding.txtvPlaylistCount.setText(getString(R.string.playlist_in_playlists_label, count));
-                    rowBinding.txtvPlaylistCount.setVisibility(View.VISIBLE);
-                } else {
-                    rowBinding.txtvPlaylistCount.setVisibility(View.GONE);
-                }
-                return convertView;
-            }
-        };
-        new MaterialAlertDialogBuilder(requireContext())
-                .setTitle(R.string.playlist_select_podcasts_label)
-                .setAdapter(adapter, (dialog, which) -> showFeedOptionsDialog(pickerFeeds.get(which), null))
-                .setNegativeButton(R.string.cancel_label, null)
-                .show();
+        EventBus.getDefault().post(
+                new MessageEvent(getString(R.string.playlist_all_podcasts_added_label)));
     }
 
     @Nullable
@@ -332,8 +318,38 @@ public class EditPlaylistDialog extends DialogFragment {
         return true;
     }
 
+    private void showEditNameDialog() {
+        final EditTextDialogBinding dialogBinding = EditTextDialogBinding.inflate(getLayoutInflater());
+        dialogBinding.textInput.setText(playlistName);
+        dialogBinding.textInputLayout.setHint(getString(R.string.playlist_name_label));
+        AlertDialog dialog = new MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.edit_playlist_label)
+                .setView(dialogBinding.getRoot())
+                .setPositiveButton(android.R.string.ok, null)
+                .setNegativeButton(R.string.cancel_label, null)
+                .show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String newName = dialogBinding.textInput.getText().toString().trim();
+            if (TextUtils.isEmpty(newName)) {
+                EventBus.getDefault().post(new MessageEvent(getString(R.string.playlist_name_empty_error)));
+                return;
+            }
+            playlistName = newName;
+            binding.playlistNameDisplay.setText(playlistName);
+            dialog.dismiss();
+        });
+    }
+
     private void savePlaylist() {
-        String name = binding.playlistNameInput.getText().toString().trim();
+        String name;
+        if (playlistId == 0) {
+            name = binding.playlistNameInput.getText().toString().trim();
+        } else if (playlistName != null) {
+            name = playlistName;
+        } else {
+            name = binding.playlistNameDisplay.getText().toString();
+        }
+
         if (TextUtils.isEmpty(name)) {
             EventBus.getDefault().post(new MessageEvent(getString(R.string.playlist_name_empty_error)));
             return;
