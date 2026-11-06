@@ -383,6 +383,28 @@ public final class DBReader {
         }
     }
 
+    /**
+     * Loads undownloaded episodes of feeds that are part of at least one playlist,
+     * newest first. Playlist-specific filters are applied by the caller.
+     *
+     * @return A list of FeedItems that are playlist candidates for automatic download.
+     *         The Feed-attribute of the FeedItems will already be set correctly.
+     */
+    @NonNull
+    public static synchronized List<FeedItem> getPlaylistAutoDownloadCandidates() {
+        PodDBAdapter adapter = PodDBAdapter.getInstance();
+        adapter.open();
+        try (FeedItemCursor cursor = new FeedItemCursor(adapter.getPlaylistAutoDownloadCandidatesCursor())) {
+            List<FeedItem> items = extractItemlistFromCursor(cursor);
+            if (!items.isEmpty()) {
+                loadFeedDataOfFeedItemList(items);
+            }
+            return items;
+        } finally {
+            adapter.close();
+        }
+    }
+
     public static synchronized int getTotalEpisodeCount(FeedItemFilter filter) {
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();

@@ -8,13 +8,17 @@ import android.util.Log;
 
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import de.danoeh.antennapod.model.feed.FeedItem;
 import de.danoeh.antennapod.model.feed.FeedItemFilter;
 import de.danoeh.antennapod.model.feed.FeedPreferences;
+import de.danoeh.antennapod.model.feed.Playlist;
 import de.danoeh.antennapod.net.download.serviceinterface.DownloadServiceInterface;
 import de.danoeh.antennapod.storage.database.DBReader;
+import de.danoeh.antennapod.storage.database.PlaylistMatcher;
 import de.danoeh.antennapod.storage.preferences.UserPreferences;
 import de.danoeh.antennapod.net.common.NetworkUtils;
 
@@ -53,17 +57,28 @@ public class AutomaticDownloadAlgorithm {
                 boolean autoDownloadQueueEnabled = UserPreferences.isEnableAutodownloadQueue();
                 final List<FeedItem> newItems = DBReader.getAutoDownloadCandidates(
                         globalAutoDownloadEnabled, autoDownloadQueueEnabled);
+                final List<Playlist> playlists = DBReader.getPlaylists();
                 final List<FeedItem> candidates = new ArrayList<>();
 
+                Map<Long, FeedItem> candidateIndex = new LinkedHashMap<>();
                 for (FeedItem newItem : newItems) {
                     FeedPreferences feedPrefs = newItem.getFeed().getPreferences();
                     boolean shouldAdd = (autoDownloadQueueEnabled && newItem.isTagged(FeedItem.TAG_QUEUE))
                             || (feedPrefs.isAutoDownload(globalAutoDownloadEnabled)
                             && feedPrefs.getFilter().shouldAutoDownload(newItem));
                     if (shouldAdd) {
-                        candidates.add(newItem);
+                        candidateIndex.put(newItem.getId(), newItem);
                     }
                 }
+                for (FeedItem item : DBReader.getPlaylistAutoDownloadCandidates()) {
+                    if (!PlaylistMatcher.isIncludedInAnyPlaylistForAutoDownload(item, playlists)) {
+                        continue;
+                    }
+                    if (!candidateIndex.containsKey(item.getId())) {
+                        candidateIndex.put(item.getId(), item);
+                    }
+                }
+                candidates.addAll(candidateIndex.values());
 
                 // filter items that are not auto downloadable
                 Iterator<FeedItem> it = candidates.iterator();

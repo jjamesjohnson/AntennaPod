@@ -19,6 +19,7 @@ import androidx.work.WorkerParameters;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import de.danoeh.antennapod.net.download.service.R;
+import de.danoeh.antennapod.net.download.service.episode.autodownload.PlaylistMediaCleanup;
 import de.danoeh.antennapod.net.download.service.feed.remote.DefaultDownloaderFactory;
 import de.danoeh.antennapod.net.download.service.feed.remote.Downloader;
 import de.danoeh.antennapod.net.download.serviceinterface.DownloadRequestCreator;
@@ -192,6 +193,7 @@ public class EpisodeDownloadWorker extends Worker {
             handler.run();
             DBWriter.addDownloadStatus(handler.getUpdatedStatus());
             DownloadAnnouncer.announceCompleted(getApplicationContext(), request.getTitle());
+            PlaylistMediaCleanup.performCleanup(getApplicationContext());
             return Result.success();
         }
 
