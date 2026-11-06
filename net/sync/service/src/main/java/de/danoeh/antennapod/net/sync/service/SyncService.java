@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.util.Log;
 import androidx.annotation.NonNull;
+import androidx.collection.ArrayMap;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.util.Pair;
@@ -21,6 +22,7 @@ import de.danoeh.antennapod.model.feed.Feed;
 import de.danoeh.antennapod.model.feed.FeedItem;
 import de.danoeh.antennapod.model.feed.FeedItemFilter;
 import de.danoeh.antennapod.model.feed.FeedMedia;
+import de.danoeh.antennapod.model.feed.Playlist;
 import de.danoeh.antennapod.model.feed.SortOrder;
 import de.danoeh.antennapod.net.common.AntennapodHttpClient;
 import de.danoeh.antennapod.net.common.RedirectChecker;
@@ -45,6 +47,8 @@ import de.danoeh.antennapod.storage.preferences.UserPreferences;
 import de.danoeh.antennapod.ui.notifications.NotificationUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.greenrobot.eventbus.EventBus;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -87,6 +91,7 @@ public class SyncService extends Worker {
                 return Result.success();
             }
             syncEpisodeActions(activeSyncProvider);
+            syncPlaylists(activeSyncProvider);
             activeSyncProvider.logout();
             clearErrorNotifications();
             EventBus.getDefault().postSticky(new SyncServiceEvent(R.string.sync_status_success));
@@ -260,6 +265,93 @@ public class SyncService extends Worker {
             }
         }
         SynchronizationSettings.setLastEpisodeActionSynchronizationAttemptTimestamp(newTimeStamp);
+    }
+
+    private void syncPlaylists(ISyncService syncServiceImpl) throws SyncServiceException {
+        EventBus.getDefault().postSticky(new SyncServiceEvent(R.string.sync_status_episodes_upload));
+        String accountSettings = syncServiceImpl.getAccountSettings();
+        if (accountSettings == null) {
+            Log.d(TAG, "Backend does not support the settings API. Skipping playlist sync.");
+            return;
+        }
+        int feedsHash = getFeedsHash();
+        if (synchronizationQueueStorage.isPlaylistsDirty()) {
+            List<Playlist> playlists = DBReader.getPlaylists();
+            String payload;
+            try {
+                payload = PlaylistSettingsSerializer.serialize(playlists, getFeedUrlsById());
+            } catch (JSONException e) {
+                Log.e(TAG, Log.getStackTraceString(e));
+                return;
+            }
+            Log.d(TAG, "Uploading " + playlists.size() + " playlists");
+            syncServiceImpl.uploadAccountSettings(
+                    Collections.singletonMap(PlaylistSettingsSerializer.KEY, payload));
+            String currentPayload;
+            try {
+                currentPayload = PlaylistSettingsSerializer.serialize(DBReader.getPlaylists(), getFeedUrlsById());
+            } catch (JSONException e) {
+                Log.e(TAG, Log.getStackTraceString(e));
+                return;
+            }
+            synchronizationQueueStorage.setPlaylistsDirty(!payload.equals(currentPayload));
+            synchronizationQueueStorage.setLastPulledPlaylists(payload);
+            synchronizationQueueStorage.setLastPulledPlaylistsFeedsHash(feedsHash);
+            return;
+        }
+        String payload;
+        try {
+            JSONObject settingsObject = new JSONObject(accountSettings);
+            payload = settingsObject.has(PlaylistSettingsSerializer.KEY)
+                    ? settingsObject.getString(PlaylistSettingsSerializer.KEY) : null;
+        } catch (JSONException e) {
+            Log.e(TAG, Log.getStackTraceString(e));
+            return;
+        }
+        if (payload == null) {
+            Log.d(TAG, "No playlists on the sync server yet");
+            return;
+        }
+        if (payload.equals(synchronizationQueueStorage.getLastPulledPlaylists())
+                && feedsHash == synchronizationQueueStorage.getLastPulledPlaylistsFeedsHash()) {
+            return;
+        }
+        List<Playlist> playlists;
+        try {
+            playlists = PlaylistSettingsSerializer.deserialize(payload, getFeedIdsByUrl());
+        } catch (JSONException e) {
+            Log.e(TAG, Log.getStackTraceString(e));
+            return;
+        }
+        Log.d(TAG, "Applying " + playlists.size() + " playlists from the sync server");
+        DBWriter.replacePlaylists(getApplicationContext(), playlists);
+        synchronizationQueueStorage.setLastPulledPlaylists(payload);
+        synchronizationQueueStorage.setLastPulledPlaylistsFeedsHash(feedsHash);
+    }
+
+    private int getFeedsHash() {
+        List<String> urls = new ArrayList<>();
+        for (Feed feed : DBReader.getFeedList()) {
+            urls.add(feed.getDownloadUrl());
+        }
+        Collections.sort(urls);
+        return urls.hashCode();
+    }
+
+    private Map<Long, String> getFeedUrlsById() {
+        Map<Long, String> feedUrlsById = new ArrayMap<>();
+        for (Feed feed : DBReader.getFeedList()) {
+            feedUrlsById.put(feed.getId(), feed.getDownloadUrl());
+        }
+        return feedUrlsById;
+    }
+
+    private Map<String, Long> getFeedIdsByUrl() {
+        Map<String, Long> feedIdsByUrl = new ArrayMap<>();
+        for (Feed feed : DBReader.getFeedList()) {
+            feedIdsByUrl.put(feed.getDownloadUrl(), feed.getId());
+        }
+        return feedIdsByUrl;
     }
 
     private synchronized void processEpisodeActions(List<EpisodeAction> remoteActions) {

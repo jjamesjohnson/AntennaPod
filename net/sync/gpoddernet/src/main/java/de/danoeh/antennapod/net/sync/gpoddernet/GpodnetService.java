@@ -27,6 +27,7 @@ import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import de.danoeh.antennapod.net.sync.gpoddernet.mapper.ResponseMapper;
 import de.danoeh.antennapod.net.sync.gpoddernet.model.GpodnetDevice;
@@ -284,6 +285,63 @@ public class GpodnetService implements ISyncService {
             throw new SyncServiceException(e);
         }
 
+    }
+
+    /**
+     * Returns the account-scoped settings of the user.
+     *
+     * @throws SyncServiceException If there is an authentication error.
+     */
+    @Override
+    public String getAccountSettings() throws SyncServiceException {
+        requireLoggedIn();
+        try {
+            URL url = new URI(baseScheme, null, baseHost, basePort,
+                    String.format("%s/api/2/settings/%s/account.json", baseFolder, username),
+                    null, null).toURL();
+            Request.Builder request = new Request.Builder().url(url);
+            return executeRequest(request);
+        } catch (GpodnetServiceBadStatusCodeException e) {
+            if (e.getStatusCode() < 500) {
+                Log.d(TAG, "Server does not implement the settings API (status " + e.getStatusCode() + ")");
+                return null;
+            }
+            throw e;
+        } catch (MalformedURLException | URISyntaxException e) {
+            e.printStackTrace();
+            throw new SyncServiceException(e);
+        }
+    }
+
+    /**
+     * Uploads account-scoped settings of the user.
+     *
+     * @throws SyncServiceException If there is an authentication error.
+     */
+    @Override
+    public void uploadAccountSettings(Map<String, String> settings) throws SyncServiceException {
+        requireLoggedIn();
+        try {
+            URL url = new URI(baseScheme, null, baseHost, basePort,
+                    String.format("%s/api/2/settings/%s/account.json", baseFolder, username),
+                    null, null).toURL();
+
+            final JSONObject requestObject = new JSONObject();
+            requestObject.put("set", new JSONObject(settings));
+
+            RequestBody body = RequestBody.create(requestObject.toString(), JSON);
+            Request.Builder request = new Request.Builder().post(body).url(url);
+            executeRequest(request);
+        } catch (GpodnetServiceBadStatusCodeException e) {
+            if (e.getStatusCode() < 500) {
+                Log.d(TAG, "Server does not implement the settings API (status " + e.getStatusCode() + ")");
+                return;
+            }
+            throw e;
+        } catch (JSONException | MalformedURLException | URISyntaxException e) {
+            e.printStackTrace();
+            throw new SyncServiceException(e);
+        }
     }
 
     /**
